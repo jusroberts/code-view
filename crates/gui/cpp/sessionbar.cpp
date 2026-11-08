@@ -86,6 +86,9 @@ SessionBar::SessionBar(QWidget *parent)
                        [this, key] { if (onRename) onRename(key); });
         menu.addAction(QIcon::fromTheme(QStringLiteral("tab-close")), QStringLiteral("Close…"), this,
                        [this, key] { if (onClose) onClose(key); });
+        menu.addSeparator();
+        menu.addAction(QIcon::fromTheme(QStringLiteral("document-open-recent")), QStringLiteral("Resume Earlier Conversation Here…"), this,
+                       [this, key] { if (onResume) onResume(key); });
         menu.exec(m_list->viewport()->mapToGlobal(pos));
     });
 

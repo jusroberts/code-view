@@ -1,7 +1,7 @@
 //! Session state shared by all connected clients.
 
 use crate::claude::{self, Action, ClaudeProc};
-use crate::{files, git, login, lsp};
+use crate::{files, git, login, lsp, transcripts};
 use anyhow::{Context, Result, anyhow, bail};
 use codeview_protocol::*;
 use serde::{Deserialize, Serialize};
@@ -168,7 +168,15 @@ impl Daemon {
                 "home": home_dir(),
             })),
             Request::ListSessions => Ok(json!(Self::session_list(&self.state.lock().unwrap()))),
-            Request::CreateSession { name, cwd, permission_mode } => self.create_session(name, cwd, permission_mode),
+            Request::CreateSession { name, cwd, permission_mode, resume } => self.create_session(name, cwd, permission_mode, resume),
+            Request::ListConversations { cwd } => {
+                let cwd = files::expand(&cwd).canonicalize()?.to_string_lossy().into_owned();
+                let open: HashMap<String, String> = {
+                    let st = self.state.lock().unwrap();
+                    st.sessions.values().map(|s| (s.claude_session_id.clone(), s.info.id.clone())).collect()
+                };
+                Ok(json!(transcripts::list(&cwd, &|id| open.get(id).cloned())))
+            }
             Request::RenameSession { session, name } => {
                 let mut st = self.state.lock().unwrap();
                 st.sessions.get_mut(&session).context("no such session")?.info.name = name;
@@ -260,26 +268,43 @@ impl Daemon {
         }
     }
 
-    fn create_session(&self, name: String, cwd: String, permission_mode: Option<String>) -> Result<Value> {
+    fn create_session(&self, name: String, cwd: String, permission_mode: Option<String>, resume: Option<String>) -> Result<Value> {
         let cwd = files::expand(&cwd);
         if !cwd.is_dir() {
             bail!("{} is not a directory", cwd.display());
         }
         let cwd = cwd.canonicalize()?.to_string_lossy().into_owned();
+        // Resuming: load the saved conversation so its earlier messages show in the chat.
+        let (history, title) = match &resume {
+            Some(claude_id) => {
+                if let Some(s) = self.state.lock().unwrap().sessions.values().find(|s| &s.claude_session_id == claude_id) {
+                    bail!("this conversation is already open as “{}”", s.info.name);
+                }
+                transcripts::history(&transcripts::transcript_path(&cwd, claude_id)?)
+            }
+            None => (Vec::new(), String::new()),
+        };
         let id = uuid::Uuid::new_v4().to_string();
+        let name = if !name.trim().is_empty() {
+            name
+        } else if !title.is_empty() {
+            title.chars().take(40).collect()
+        } else {
+            default_name(&cwd)
+        };
         let info = SessionInfo {
             id: id.clone(),
-            name: if name.trim().is_empty() { default_name(&cwd) } else { name },
+            name,
             cwd,
             backend: "claude".into(),
             permission_mode: permission_mode.filter(|m| !m.is_empty()),
             status: SessionStatus::Idle,
             created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
         };
-        let session = Session {
+        let mut session = Session {
             info: info.clone(),
-            claude_session_id: uuid::Uuid::new_v4().to_string(),
-            started: false,
+            claude_session_id: resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            started: resume.is_some(),
             busy: false,
             interrupted: false,
             history: Vec::new(),
@@ -287,6 +312,12 @@ impl Daemon {
             proc: None,
             pending: HashMap::new(),
         };
+        for event in history {
+            self.push(&mut session, event);
+        }
+        if resume.is_some() {
+            self.push(&mut session, SessionEvent::Info { message: "Resumed an earlier conversation.".into() });
+        }
         let mut st = self.state.lock().unwrap();
         st.sessions.insert(id, session);
         self.persist(&st);

@@ -18,6 +18,7 @@ impl Daemon {
         let child = Command::new(env!("CARGO_BIN_EXE_codeviewd"))
             .env("CODEVIEW_SOCKET", &socket)
             .env("CODEVIEW_STATE_DIR", dir.join("state"))
+            .env("CLAUDE_CONFIG_DIR", dir.join("claude"))
             .env("CODEVIEW_CLAUDE_BIN", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_claude.py"))
             .spawn()
             .unwrap();
@@ -288,4 +289,57 @@ fn lsp_relay() {
 
     let missing = c.call(json!({"op": "lsp_start", "file": file, "candidates": [["no-such-language-server"]]}));
     assert!(missing.unwrap_err().contains("no language server found"));
+}
+
+#[test]
+fn list_and_resume_saved_conversation() {
+    let dir = tempdir("resume");
+    let project = dir.join("my.project");
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    // A transcript as Claude Code writes it, under the folder name it derives from the cwd.
+    let encoded: String = project.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let tdir = dir.join("claude/projects").join(encoded);
+    std::fs::create_dir_all(&tdir).unwrap();
+    let id = "0b1c2d3e-0000-4000-8000-000000000001";
+    let lines = [
+        json!({"type": "user", "isMeta": true, "message": {"role": "user", "content": "<local-command-caveat>x</local-command-caveat>"}}),
+        json!({"type": "user", "message": {"role": "user", "content": "Fix   the\nbuild please"}}),
+        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "On it."},
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo build"}}]}}),
+        json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}),
+        json!({"type": "assistant", "isSidechain": true, "message": {"content": [{"type": "text", "text": "subagent"}]}}),
+        json!({"type": "user", "message": {"content": [{"type": "text", "text": "thanks"}]}}),
+    ];
+    std::fs::write(tdir.join(format!("{id}.jsonl")), lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+    std::fs::write(tdir.join("0b1c2d3e-0000-4000-8000-000000000002.jsonl"), "").unwrap(); // no prompts: not listed
+
+    let d = Daemon::start(&dir);
+    let mut c = Client::connect(&d);
+    let list = c.call(json!({"op": "list_conversations", "cwd": project})).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list[0]["id"], id);
+    assert_eq!(list[0]["title"], "Fix the build please");
+    assert_eq!(list[0]["prompts"], 2);
+    assert_eq!(list[0]["recent"], true);
+    assert!(list[0]["open_session"].is_null());
+
+    let info = c.call(json!({"op": "create_session", "name": "", "cwd": project, "resume": id})).unwrap();
+    assert_eq!(info["name"], "Fix the build please");
+    let sid = info["id"].as_str().unwrap().to_string();
+    let history = c.call(json!({"op": "get_history", "session": sid})).unwrap();
+    let kinds: Vec<&str> = history.as_array().unwrap().iter().map(|e| e["event"]["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["user", "text", "tool_use", "tool_result", "user", "info"]);
+    assert_eq!(history[0]["event"]["text"], "Fix   the\nbuild please");
+
+    // Listed as open now, and can't be opened twice.
+    let list = c.call(json!({"op": "list_conversations", "cwd": project})).unwrap();
+    assert_eq!(list[0]["open_session"], sid.as_str());
+    assert!(c.call(json!({"op": "create_session", "name": "", "cwd": project, "resume": id})).is_err());
+    assert!(c.call(json!({"op": "create_session", "name": "", "cwd": project, "resume": "../x"})).is_err());
+
+    // The next message continues the conversation with --resume.
+    c.call(json!({"op": "send_message", "session": sid, "text": "more"})).unwrap();
+    assert_eq!(c.wait_event(|e| e["type"] == "info" && e["message"].as_str().unwrap().starts_with("Model"))["message"], "Model: fake-resumed");
+    c.wait_event(|e| e["type"] == "turn_complete");
 }

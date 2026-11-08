@@ -175,7 +175,7 @@ pub fn permission_response(request_id: &str, allow: bool, input: Value) -> Strin
     .to_string()
 }
 
-fn translate(v: &Value) -> Vec<Action> {
+pub fn translate(v: &Value) -> Vec<Action> {
     let mut out = Vec::new();
     // Messages from subagents carry a parent tool id; keep the main transcript readable.
     if v.get("parent_tool_use_id").is_some_and(|p| !p.is_null()) {

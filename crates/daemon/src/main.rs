@@ -6,6 +6,7 @@ mod git;
 mod lsp;
 mod login;
 mod server;
+mod transcripts;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

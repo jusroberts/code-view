@@ -34,6 +34,11 @@
 #include <QTextStream>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QPointer>
+#include <QLocale>
+#include <QDateTime>
+#include <QHeaderView>
+#include <QTreeWidget>
 
 namespace cv {
 
@@ -146,6 +151,9 @@ MainWindow::MainWindow()
     m_sessionBar->onNew = [this] { newSession(); };
     m_sessionBar->onRename = [this](const QString &key) { renameSession(m_chats.value(key)); };
     m_sessionBar->onClose = [this](const QString &key) { closeSession(m_chats.value(key)); };
+    m_sessionBar->onResume = [this](const QString &key) {
+        if (ChatView *c = m_chats.value(key)) resumeConversation(c->connection(), c->cwd());
+    };
     m_sessionBar->onCurrentChanged = [this](const QString &key) {
         if (ChatView *c = m_chats.value(key)) m_chatStack->setCurrentWidget(c);
         currentSessionChanged();
@@ -242,6 +250,11 @@ void MainWindow::setupMenus()
     QMenu *session = menuBar()->addMenu(QStringLiteral("&Session"));
     session->addAction(QIcon::fromTheme(QStringLiteral("list-add")), QStringLiteral("&New Session…"),
                        QKeySequence(QStringLiteral("Ctrl+Shift+N")), this, [this] { newSession(); });
+    session->addAction(QIcon::fromTheme(QStringLiteral("document-open-recent")), QStringLiteral("R&esume Conversation…"), this, [this] {
+        ChatView *c = currentChat();
+        Connection *conn = currentConnection();
+        if (conn) resumeConversation(conn, c ? c->cwd() : conn->home());
+    });
     session->addAction(QIcon::fromTheme(QStringLiteral("edit-rename")), QStringLiteral("&Rename Session…"), this,
                        [this] { renameSession(currentChat()); });
     session->addAction(QIcon::fromTheme(QStringLiteral("tab-close")), QStringLiteral("&Close Session…"), this,
@@ -634,11 +647,16 @@ void MainWindow::newSession(Connection *preferred)
     if (!conn) return;
     QJsonObject args{{QStringLiteral("name"), name->text().trimmed()}, {QStringLiteral("cwd"), dir->text().trimmed()}};
     if (!mode->currentData().toString().isEmpty()) args.insert(QStringLiteral("permission_mode"), mode->currentData().toString());
-    conn->request(QStringLiteral("create_session"), args, [this, id = conn->id()](bool ok, const QJsonValue &data, const QString &error) {
+    requestCreateSession(conn, args, QStringLiteral("New Session"));
+}
+
+void MainWindow::requestCreateSession(Connection *conn, const QJsonObject &args, const QString &title)
+{
+    conn->request(QStringLiteral("create_session"), args, [this, id = conn->id(), title](bool ok, const QJsonValue &data, const QString &error) {
         Connection *c = Connection::find(id);
         if (!c) return;
         if (!ok) {
-            QMessageBox::warning(this, QStringLiteral("New Session"), error);
+            QMessageBox::warning(this, title, error);
             return;
         }
         const QString key = chatKey(c, data[QStringLiteral("id")].toString());
@@ -649,6 +667,101 @@ void MainWindow::newSession(Connection *preferred)
             m_selectOnCreate = key; // the sessions_changed event hasn't arrived yet
         }
     });
+}
+
+void MainWindow::resumeConversation(Connection *conn, const QString &cwd)
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(conn->isLocal() ? QStringLiteral("Resume Conversation")
+                                       : QStringLiteral("Resume Conversation on %1").arg(conn->label()));
+    auto *dir = new QLineEdit(cwd);
+    auto *browse = new QPushButton(QIcon::fromTheme(QStringLiteral("document-open-folder")), QString());
+    auto *dirRow = new QHBoxLayout;
+    dirRow->addWidget(new QLabel(QStringLiteral("Folder:")));
+    dirRow->addWidget(dir, 1);
+    dirRow->addWidget(browse);
+    auto *list = new QTreeWidget;
+    list->setHeaderLabels({QStringLiteral("Conversation"), QStringLiteral("Prompts"), QStringLiteral("Last active")});
+    list->setRootIsDecorated(false);
+    list->setUniformRowHeights(true);
+    list->header()->setStretchLastSection(false);
+    list->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    list->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    list->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    auto *note = new QLabel;
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    QPushButton *resume = buttons->addButton(QStringLiteral("Resume"), QDialogButtonBox::AcceptRole);
+    resume->setEnabled(false);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(list, &QTreeWidget::itemSelectionChanged, &dlg, [list, resume] { resume->setEnabled(list->currentItem()); });
+    connect(list, &QTreeWidget::itemDoubleClicked, &dlg, &QDialog::accept);
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addLayout(dirRow);
+    layout->addWidget(list, 1);
+    layout->addWidget(note);
+    layout->addWidget(buttons);
+
+    QPointer<QDialog> guard(&dlg);
+    auto load = [guard, conn, dir, list, note] {
+        list->clear();
+        note->setText(QStringLiteral("Loading…"));
+        conn->request(QStringLiteral("list_conversations"), {{QStringLiteral("cwd"), dir->text().trimmed()}},
+                      [guard, list, note](bool ok, const QJsonValue &data, const QString &error) {
+                          if (!guard) return;
+                          if (!ok) {
+                              note->setText(error);
+                              return;
+                          }
+                          for (const QJsonValue &v : data.toArray()) {
+                              const QJsonObject o = v.toObject();
+                              QString title = o.value(QStringLiteral("title")).toString();
+                              if (!o.value(QStringLiteral("open_session")).toString().isEmpty()) title += QStringLiteral("  (open)");
+                              auto *item = new QTreeWidgetItem(
+                                  list, {title, QString::number(o.value(QStringLiteral("prompts")).toInt()),
+                                         QLocale().toString(QDateTime::fromSecsSinceEpoch(o.value(QStringLiteral("modified")).toInteger()),
+                                                            QLocale::ShortFormat)});
+                              item->setData(0, Qt::UserRole, o);
+                              item->setToolTip(0, o.value(QStringLiteral("title")).toString());
+                              if (o.value(QStringLiteral("recent")).toBool())
+                                  item->setIcon(0, QIcon::fromTheme(QStringLiteral("media-playback-start")));
+                          }
+                          note->setText(list->topLevelItemCount()
+                                            ? QStringLiteral("Conversations Claude saved for this folder, including ones started in a terminal.")
+                                            : QStringLiteral("No saved conversations for this folder."));
+                          if (list->topLevelItemCount()) list->setCurrentItem(list->topLevelItem(0));
+                      });
+    };
+    connect(dir, &QLineEdit::returnPressed, &dlg, load);
+    connect(browse, &QPushButton::clicked, &dlg, [&dlg, conn, dir, load] {
+        const QString p = pickFolder(&dlg, conn, dir->text());
+        if (p.isEmpty()) return;
+        dir->setText(p);
+        load();
+    });
+    load();
+    dlg.resize(760, 480);
+    if (dlg.exec() != QDialog::Accepted || !list->currentItem()) return;
+
+    const QJsonObject o = list->currentItem()->data(0, Qt::UserRole).toJsonObject();
+    const QString key = chatKey(conn, o.value(QStringLiteral("open_session")).toString());
+    if (m_chats.contains(key)) { // already running here: just switch to it
+        m_sessionBar->setCurrentKey(key);
+        return;
+    }
+    if (o.value(QStringLiteral("recent")).toBool() &&
+        QMessageBox::question(this, QStringLiteral("Resume Conversation"),
+                              QStringLiteral("This conversation was active in the last two minutes, maybe in a terminal. "
+                                             "If it's still running there, both will write to it and the messages can get mixed up.\n\n"
+                                             "Resume it anyway?")) != QMessageBox::Yes)
+        return;
+    requestCreateSession(conn,
+                         {{QStringLiteral("name"), QString()},
+                          {QStringLiteral("cwd"), dir->text().trimmed()},
+                          {QStringLiteral("resume"), o.value(QStringLiteral("id")).toString()}},
+                         QStringLiteral("Resume Conversation"));
 }
 
 void MainWindow::renameSession(ChatView *c)

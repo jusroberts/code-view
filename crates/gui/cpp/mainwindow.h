@@ -58,6 +58,9 @@ private:
     void newSession(Connection *preferred = nullptr);
     void renameSession(ChatView *chat);
     void closeSession(ChatView *chat);
+    // Lists Claude's saved conversations for a folder and opens the chosen one as a session.
+    void resumeConversation(Connection *conn, const QString &cwd);
+    void requestCreateSession(Connection *conn, const QJsonObject &args, const QString &title);
 
     void refreshAuth(Connection *conn, bool promptIfLoggedOut = false);
     void updateAuthLabel();

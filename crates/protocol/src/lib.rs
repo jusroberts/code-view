@@ -28,7 +28,12 @@ pub enum Request {
         cwd: String,
         #[serde(default)]
         permission_mode: Option<String>,
+        /// A saved Claude conversation id (from `list_conversations`) to continue.
+        #[serde(default)]
+        resume: Option<String>,
     },
+    /// Returns `[Conversation]`: Claude's saved conversations started in `cwd`, newest first.
+    ListConversations { cwd: String },
     RenameSession { session: String, name: String },
     CloseSession { session: String },
     /// Returns `[SeqEvent]`.
@@ -76,8 +81,32 @@ pub enum Request {
 impl Request {
     /// Requests that may take a while and can safely run out of order.
     pub fn is_slow(&self) -> bool {
-        matches!(self, Request::AuthStatus | Request::GitStatus { .. } | Request::GitDiff { .. })
+        matches!(
+            self,
+            Request::AuthStatus
+                | Request::GitStatus { .. }
+                | Request::GitDiff { .. }
+                | Request::ListConversations { .. }
+                | Request::CreateSession { resume: Some(_), .. }
+        )
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conversation {
+    /// Claude's session id.
+    pub id: String,
+    /// Custom title if one was set, else the first prompt.
+    pub title: String,
+    /// Number of prompts the user typed.
+    pub prompts: usize,
+    /// Unix seconds of the last write.
+    pub modified: u64,
+    /// Written in the last two minutes, so maybe still running elsewhere (e.g. a terminal).
+    pub recent: bool,
+    /// The codeview session already running this conversation, if any.
+    #[serde(default)]
+    pub open_session: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

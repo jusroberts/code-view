@@ -30,6 +30,7 @@ public:
     std::function<void()> onNew;
     std::function<void(const QString &key)> onRename;
     std::function<void(const QString &key)> onClose;
+    std::function<void(const QString &key)> onResume; // resume an earlier conversation in that session's folder
 
 private:
     QListWidgetItem *find(const QString &key) const;
