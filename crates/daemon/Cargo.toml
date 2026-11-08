@@ -1,0 +1,15 @@
+[package]
+name = "codeviewd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+codeview-protocol.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid = { version = "1", features = ["v4"] }
+portable-pty = "0.9"
+strip-ansi-escapes = "0.2"
