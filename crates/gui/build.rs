@@ -8,6 +8,7 @@ const SOURCES: &[&str] = &[
     "cpp/editorarea.cpp",
     "cpp/filetree.cpp",
     "cpp/logindialog.cpp",
+    "cpp/sessionbar.cpp",
 ];
 
 /// KDE Frameworks only ship CMake configs, so add every KF6 header dir.

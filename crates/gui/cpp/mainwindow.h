@@ -6,7 +6,7 @@
 #include <QPointer>
 #include <QSet>
 
-class QTabWidget;
+class QDockWidget;
 class QLabel;
 class QMenu;
 class QStackedWidget;
@@ -20,6 +20,7 @@ class Connection;
 class EditorArea;
 class FileTree;
 class LoginDialog;
+class SessionBar;
 
 class MainWindow : public QMainWindow
 {
@@ -47,10 +48,11 @@ private:
     ChatView *currentChat() const;
     Connection *currentConnection() const;
     void currentSessionChanged();
-    void updateTabTitle(ChatView *chat);
+    void updateSessionEntry(ChatView *chat);
+    void updateChatTitle();
 
     void newSession(Connection *preferred = nullptr);
-    void renameSession();
+    void renameSession(ChatView *chat);
     void closeSession(ChatView *chat);
 
     void refreshAuth(Connection *conn, bool promptIfLoggedOut = false);
@@ -60,7 +62,9 @@ private:
     EditorArea *m_editors;
     FileTree *m_files;
     QStackedWidget *m_sessionStack;
-    QTabWidget *m_sessionTabs;
+    QStackedWidget *m_chatStack;
+    SessionBar *m_sessionBar;
+    QDockWidget *m_chatDock;
     QMenu *m_hostsMenu;
     QLabel *m_connLabel;
     QLabel *m_authLabel;

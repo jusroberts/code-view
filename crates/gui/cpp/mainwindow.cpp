@@ -4,6 +4,7 @@
 #include "editorarea.h"
 #include "filetree.h"
 #include "logindialog.h"
+#include "sessionbar.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -13,7 +14,6 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
-#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -27,7 +27,6 @@
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
-#include <QTabWidget>
 #include <QTextStream>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -68,8 +67,8 @@ QString connectionHint(const QString &detail)
     return {};
 }
 
-// Folder picker for a remote host, browsing through its daemon.
-QString pickRemoteFolder(QWidget *parent, Connection *conn, const QString &start)
+// Folder picker that browses through a host's daemon (local or remote).
+QString pickFolder(QWidget *parent, Connection *conn, const QString &start)
 {
     QDialog dlg(parent);
     dlg.setWindowTitle(QStringLiteral("Choose a folder on %1").arg(conn->label()));
@@ -116,20 +115,25 @@ MainWindow::MainWindow()
     filesDock->setWidget(m_files);
     addDockWidget(Qt::LeftDockWidgetArea, filesDock);
 
-    // Sessions (right).
-    m_sessionTabs = new QTabWidget;
-    m_sessionTabs->setTabsClosable(true);
-    m_sessionTabs->setMovable(true);
-    m_sessionTabs->setDocumentMode(true);
-    auto *addButton = new QToolButton;
-    addButton->setIcon(QIcon::fromTheme(QStringLiteral("list-add")));
-    addButton->setToolTip(QStringLiteral("New session"));
-    addButton->setAutoRaise(true);
-    connect(addButton, &QToolButton::clicked, this, [this] { newSession(); });
-    m_sessionTabs->setCornerWidget(addButton, Qt::TopRightCorner);
-    connect(m_sessionTabs, &QTabWidget::currentChanged, this, [this] { currentSessionChanged(); });
-    connect(m_sessionTabs, &QTabWidget::tabCloseRequested, this,
-            [this](int i) { closeSession(static_cast<ChatView *>(m_sessionTabs->widget(i))); });
+    // Session list (far left); the selected session drives the rest of the window.
+    m_sessionBar = new SessionBar;
+    m_sessionBar->onNew = [this] { newSession(); };
+    m_sessionBar->onRename = [this](const QString &key) { renameSession(m_chats.value(key)); };
+    m_sessionBar->onClose = [this](const QString &key) { closeSession(m_chats.value(key)); };
+    m_sessionBar->onCurrentChanged = [this](const QString &key) {
+        if (ChatView *c = m_chats.value(key)) m_chatStack->setCurrentWidget(c);
+        currentSessionChanged();
+    };
+    auto *sessionsDock = new QDockWidget(QStringLiteral("Sessions"));
+    sessionsDock->setObjectName(QStringLiteral("sessions"));
+    sessionsDock->setTitleBarWidget(new QWidget); // the bar has its own buttons
+    sessionsDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    sessionsDock->setWidget(m_sessionBar);
+    addDockWidget(Qt::LeftDockWidgetArea, sessionsDock);
+    splitDockWidget(sessionsDock, filesDock, Qt::Horizontal);
+
+    // Claude chat for the selected session (right).
+    m_chatStack = new QStackedWidget;
 
     auto *empty = new QWidget;
     auto *emptyLayout = new QVBoxLayout(empty);
@@ -144,8 +148,8 @@ MainWindow::MainWindow()
 
     m_sessionStack = new QStackedWidget;
     m_sessionStack->addWidget(empty);
-    m_sessionStack->addWidget(m_sessionTabs);
-    auto *chatDock = new QDockWidget(QStringLiteral("Claude"));
+    m_sessionStack->addWidget(m_chatStack);
+    auto *chatDock = m_chatDock = new QDockWidget(QStringLiteral("Claude"));
     chatDock->setObjectName(QStringLiteral("claude"));
     chatDock->setWidget(m_sessionStack);
     addDockWidget(Qt::RightDockWidgetArea, chatDock);
@@ -174,7 +178,7 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow()
 {
     // Chats and editors reference connections; drop them first.
-    delete m_sessionTabs;
+    delete m_chatStack;
     m_chats.clear();
     qDeleteAll(m_conns);
 }
@@ -195,9 +199,12 @@ void MainWindow::setupMenus()
     session->addAction(QIcon::fromTheme(QStringLiteral("list-add")), QStringLiteral("&New Session…"),
                        QKeySequence(QStringLiteral("Ctrl+Shift+N")), this, [this] { newSession(); });
     session->addAction(QIcon::fromTheme(QStringLiteral("edit-rename")), QStringLiteral("&Rename Session…"), this,
-                       [this] { renameSession(); });
+                       [this] { renameSession(currentChat()); });
     session->addAction(QIcon::fromTheme(QStringLiteral("tab-close")), QStringLiteral("&Close Session…"), this,
                        [this] { closeSession(currentChat()); });
+    session->addAction(QIcon::fromTheme(QStringLiteral("sidebar-collapse-left")), QStringLiteral("Collapse Session List"),
+                       QKeySequence(QStringLiteral("Ctrl+Shift+B")), this,
+                       [this] { m_sessionBar->setCollapsed(!m_sessionBar->isCollapsed()); });
     session->addSeparator();
     session->addAction(QStringLiteral("Focus Prompt"), QKeySequence(QStringLiteral("Ctrl+L")), this, [this] {
         if (auto *c = currentChat()) c->focusPrompt();
@@ -207,9 +214,9 @@ void MainWindow::setupMenus()
         auto *a = new QAction(this);
         a->setShortcut(QKeySequence(QStringLiteral("Alt+%1").arg(i + 1)));
         connect(a, &QAction::triggered, this, [this, i] {
-            if (i < m_sessionTabs->count()) {
-                m_sessionTabs->setCurrentIndex(i);
-                currentChat()->focusPrompt();
+            if (ChatView *c = m_chats.value(m_sessionBar->keyAt(i))) {
+                m_sessionBar->setCurrentKey(m_sessionBar->keyAt(i));
+                c->focusPrompt();
             }
         });
         addAction(a);
@@ -338,6 +345,7 @@ void MainWindow::removeHost(Connection *conn)
         return;
     for (auto it = m_chats.begin(); it != m_chats.end();) {
         if (it.value()->connection() == conn) {
+            m_sessionBar->removeEntry(it.key());
             delete it.value();
             it = m_chats.erase(it);
         } else {
@@ -431,21 +439,22 @@ void MainWindow::syncSessions(Connection *conn, const QJsonArray &sessions)
             chat->onFileChanged = [this, chat](const QString &p) { m_editors->reloadIfUnmodified(chat->connection(), p); };
             chat->onAuthProblem = [this, chat] { refreshAuth(chat->connection(), true); };
             m_chats.insert(key, chat);
-            m_sessionTabs->addTab(chat, QString());
+            m_chatStack->addWidget(chat);
             chat->loadHistory();
         } else {
             chat->setInfo(info);
         }
-        updateTabTitle(chat);
-        if (key == m_selectOnCreate) {
+        updateSessionEntry(chat);
+        if (key == m_selectOnCreate || m_sessionBar->currentKey().isEmpty()) {
+            if (key == m_selectOnCreate) chat->focusPrompt();
             m_selectOnCreate.clear();
-            m_sessionTabs->setCurrentWidget(chat);
-            chat->focusPrompt();
+            m_sessionBar->setCurrentKey(key);
         }
     }
     for (auto it = m_chats.begin(); it != m_chats.end();) {
         if (it.value()->connection() == conn && !seen.contains(it.key())) {
-            delete it.value(); // removes its tab
+            m_sessionBar->removeEntry(it.key());
+            delete it.value();
             it = m_chats.erase(it);
         } else {
             ++it;
@@ -455,21 +464,21 @@ void MainWindow::syncSessions(Connection *conn, const QJsonArray &sessions)
     currentSessionChanged();
 }
 
-void MainWindow::updateTabTitle(ChatView *chat)
+void MainWindow::updateSessionEntry(ChatView *chat)
 {
-    const int i = m_sessionTabs->indexOf(chat);
-    if (i < 0) return;
-    const QString status = chat->status();
-    QString icon;
-    if (status == QLatin1String("busy")) icon = QStringLiteral("media-playback-start");
-    else if (status == QLatin1String("waiting_permission")) icon = QStringLiteral("dialog-warning");
-    m_sessionTabs->setTabIcon(i, icon.isEmpty() ? QIcon() : QIcon::fromTheme(icon));
     Connection *conn = chat->connection();
-    m_sessionTabs->setTabText(i, conn->isLocal() ? chat->name() : QStringLiteral("%1 @%2").arg(chat->name(), conn->label()));
-    m_sessionTabs->setTabToolTip(i, conn->isLocal() ? chat->cwd() : conn->label() + QLatin1Char(':') + chat->cwd());
+    m_sessionBar->setEntry(chatKey(conn, chat->id()), chat->name(), conn->isLocal() ? QString() : conn->label(),
+                           conn->isLocal() ? chat->cwd() : conn->label() + QLatin1Char(':') + chat->cwd(), chat->status());
+    if (chat == currentChat()) updateChatTitle();
 }
 
-ChatView *MainWindow::currentChat() const { return static_cast<ChatView *>(m_sessionTabs->currentWidget()); }
+void MainWindow::updateChatTitle()
+{
+    ChatView *c = currentChat();
+    m_chatDock->setWindowTitle(c ? QStringLiteral("Claude — %1").arg(c->name()) : QStringLiteral("Claude"));
+}
+
+ChatView *MainWindow::currentChat() const { return m_chats.value(m_sessionBar->currentKey()); }
 
 Connection *MainWindow::currentConnection() const
 {
@@ -480,6 +489,7 @@ Connection *MainWindow::currentConnection() const
 void MainWindow::currentSessionChanged()
 {
     if (ChatView *c = currentChat()) m_files->setRoot(c->connection(), c->cwd());
+    updateChatTitle();
     updateAuthLabel();
     updateConnectionLabel();
 }
@@ -513,8 +523,7 @@ void MainWindow::newSession(Connection *preferred)
     connect(browse, &QPushButton::clicked, &dlg, [&dlg, dir, selectedConn] {
         Connection *conn = selectedConn();
         if (!conn) return;
-        const QString p = conn->isLocal() ? QFileDialog::getExistingDirectory(&dlg, QStringLiteral("Project folder"), dir->text())
-                                          : pickRemoteFolder(&dlg, conn, dir->text());
+        const QString p = pickFolder(&dlg, conn, dir->text());
         if (!p.isEmpty()) dir->setText(p);
     });
     auto *dirRow = new QHBoxLayout;
@@ -552,7 +561,7 @@ void MainWindow::newSession(Connection *preferred)
         }
         const QString key = chatKey(c, data[QStringLiteral("id")].toString());
         if (ChatView *chat = m_chats.value(key)) {
-            m_sessionTabs->setCurrentWidget(chat);
+            m_sessionBar->setCurrentKey(key);
             chat->focusPrompt();
         } else {
             m_selectOnCreate = key; // the sessions_changed event hasn't arrived yet
@@ -560,9 +569,8 @@ void MainWindow::newSession(Connection *preferred)
     });
 }
 
-void MainWindow::renameSession()
+void MainWindow::renameSession(ChatView *c)
 {
-    ChatView *c = currentChat();
     if (!c) return;
     bool ok = false;
     const QString name = QInputDialog::getText(this, QStringLiteral("Rename Session"), QStringLiteral("Name:"),
