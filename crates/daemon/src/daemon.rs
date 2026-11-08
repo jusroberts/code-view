@@ -1,7 +1,7 @@
 //! Session state shared by all connected clients.
 
 use crate::claude::{self, Action, ClaudeProc};
-use crate::{files, git, login};
+use crate::{files, git, login, lsp};
 use anyhow::{Context, Result, anyhow, bail};
 use codeview_protocol::*;
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,13 @@ pub struct Daemon {
     events: broadcast::Sender<ServerMsg>,
     state_file: PathBuf,
     pub claude_bin: String,
+    lsp: Mutex<LspState>,
+}
+
+#[derive(Default)]
+struct LspState {
+    servers: HashMap<u64, lsp::LspServer>,
+    next_id: u64,
 }
 
 #[derive(Default)]
@@ -72,6 +79,7 @@ impl Daemon {
             events,
             state_file,
             claude_bin: std::env::var("CODEVIEW_CLAUDE_BIN").unwrap_or_else(|_| "claude".into()),
+            lsp: Mutex::new(LspState::default()),
         });
         if let Ok(text) = std::fs::read_to_string(&daemon.state_file) {
             let stored: Vec<StoredSession> = serde_json::from_str(&text).context("parsing sessions.json")?;
@@ -103,7 +111,7 @@ impl Daemon {
         self.events.subscribe()
     }
 
-    fn broadcast(&self, event: Event) {
+    pub fn broadcast(&self, event: Event) {
         let _ = self.events.send(ServerMsg::Event { event });
     }
 
@@ -150,7 +158,8 @@ impl Daemon {
         }
     }
 
-    pub async fn handle(self: &Arc<Self>, req: Request) -> Result<Value> {
+    /// Handles one request from client `client` (a per-connection id).
+    pub async fn handle(self: &Arc<Self>, client: u64, req: Request) -> Result<Value> {
         match req {
             Request::Hello => Ok(json!({
                 "protocol": PROTOCOL_VERSION,
@@ -215,6 +224,17 @@ impl Daemon {
             Request::GitDiff { cwd, path, base } => Ok(json!({ "diff": git::diff(&cwd, &path, base.as_deref()).await? })),
             Request::GitRevert { cwd, path } => {
                 git::revert(&cwd, &path).await?;
+                Ok(Value::Null)
+            }
+            Request::LspStart { file, candidates } => self.lsp_start(client, &file, &candidates).await,
+            Request::LspSend { server, message } => {
+                let lsp = self.lsp.lock().unwrap();
+                let s = lsp.servers.get(&server).ok_or_else(|| anyhow!("language server {server} isn't running"))?;
+                s.send(&message);
+                Ok(Value::Null)
+            }
+            Request::LspStop { server } => {
+                self.lsp.lock().unwrap().servers.remove(&server);
                 Ok(Value::Null)
             }
             Request::StartLogin => {
@@ -403,6 +423,31 @@ impl Daemon {
     pub fn login_finished(&self, success: bool) {
         self.state.lock().unwrap().login = None;
         self.broadcast(Event::LoginFinished { success });
+    }
+
+    async fn lsp_start(self: &Arc<Self>, client: u64, file: &str, candidates: &[Vec<String>]) -> Result<Value> {
+        let command = lsp::pick_command(candidates)?;
+        let root = lsp::root_for(file).await.to_string_lossy().into_owned();
+        let mut lsp = self.lsp.lock().unwrap();
+        if let Some((id, _)) = lsp.servers.iter().find(|(_, s)| s.owner == client && s.root == root && s.command == command) {
+            return Ok(json!({"server": id, "root": root, "command": command, "existing": true}));
+        }
+        lsp.next_id += 1;
+        let id = lsp.next_id;
+        let server = lsp::spawn(self.clone(), id, client, root.clone(), command.clone())?;
+        lsp.servers.insert(id, server);
+        Ok(json!({"server": id, "root": root, "command": command, "existing": false}))
+    }
+
+    pub fn lsp_exited(&self, server: u64, error: Option<String>) {
+        if self.lsp.lock().unwrap().servers.remove(&server).is_some() || error.is_some() {
+            self.broadcast(Event::LspExited { server, error });
+        }
+    }
+
+    /// A client disconnected: stop the language servers it started.
+    pub fn client_gone(&self, client: u64) {
+        self.lsp.lock().unwrap().servers.retain(|_, s| s.owner != client);
     }
 }
 

@@ -1,5 +1,6 @@
 #include "editorarea.h"
 #include "connection.h"
+#include "lsp.h"
 
 #include <KTextEditor/Document>
 #include <KTextEditor/Editor>
@@ -7,7 +8,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <KActionCollection>
+#include <QAction>
 #include <QIcon>
+#include <QMenu>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QMimeDatabase>
@@ -49,6 +53,37 @@ EditorArea::EditorArea(QWidget *parent)
     setMovable(true);
     setDocumentMode(true);
     connect(this, &QTabWidget::tabCloseRequested, this, [this](int i) { closeTab(i); });
+
+    m_lsp = new LspManager; // deleted after the documents (views hold pointers to it)
+    m_lsp->onOpenLocation = [this](Connection *conn, const QString &path, int line, int column) { openFile(conn, path, line, column); };
+
+    auto *gotoDef = new QAction(QStringLiteral("Go to Definition"), this);
+    gotoDef->setShortcut(Qt::Key_F12);
+    gotoDef->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(gotoDef, &QAction::triggered, this, [this] { gotoDefinition(); });
+    addAction(gotoDef);
+}
+
+EditorArea::~EditorArea()
+{
+    QList<KTextEditor::Document *> docs;
+    for (int i = 0; i < count(); ++i)
+        if (auto *v = viewAt(i)) docs << v->document();
+    qDeleteAll(docs);
+    delete m_lsp;
+}
+
+void EditorArea::gotoDefinition()
+{
+    if (auto *v = viewAt(currentIndex())) m_lsp->gotoDefinition(v);
+}
+
+void EditorArea::focusAt(int index, int line, int column)
+{
+    setCurrentIndex(index);
+    KTextEditor::View *v = viewAt(index);
+    if (line >= 0) v->setCursorPosition({line, column});
+    v->setFocus();
 }
 
 KTextEditor::View *EditorArea::viewAt(int index) const { return qobject_cast<KTextEditor::View *>(widget(index)); }
@@ -71,21 +106,20 @@ int EditorArea::indexOfRemote(Connection *conn, const QString &path) const
     return -1;
 }
 
-void EditorArea::openFile(Connection *conn, const QString &path)
+void EditorArea::openFile(Connection *conn, const QString &path, int line, int column)
 {
     if (conn && !conn->isLocal()) {
         if (const int i = indexOfRemote(conn, path); i >= 0) {
-            setCurrentIndex(i);
-            viewAt(i)->setFocus();
+            focusAt(i, line, column);
             return;
         }
         QPointer<EditorArea> self(this);
         conn->request(QStringLiteral("read_file"), {{QStringLiteral("path"), path}},
-                      [self, id = conn->id(), path](bool ok, const QJsonValue &data, const QString &error) {
+                      [self, id = conn->id(), path, line, column](bool ok, const QJsonValue &data, const QString &error) {
                           Connection *c = Connection::find(id);
                           if (!self || !c) return;
                           if (!ok) QMessageBox::warning(self, QStringLiteral("Open file"), error);
-                          else self->openRemote(c, path, data[QStringLiteral("content")].toString());
+                          else self->openRemote(c, path, data[QStringLiteral("content")].toString(), line, column);
                       });
         return;
     }
@@ -97,8 +131,7 @@ void EditorArea::openFile(Connection *conn, const QString &path)
         return;
     }
     if (const int i = indexOfLocal(canonical); i >= 0) {
-        setCurrentIndex(i);
-        viewAt(i)->setFocus();
+        focusAt(i, line, column);
         return;
     }
     auto *doc = KTextEditor::Editor::instance()->createDocument(this);
@@ -107,13 +140,15 @@ void EditorArea::openFile(Connection *conn, const QString &path)
         QMessageBox::warning(this, QStringLiteral("Open file"), QStringLiteral("Couldn't open %1.").arg(canonical));
         return;
     }
+    m_lsp->attachDocument(doc, conn ? conn : Connection::find(QString::fromLatin1(Connection::kLocalId)), canonical);
     addView(doc, canonical);
+    if (line >= 0) focusAt(currentIndex(), line, column);
 }
 
-void EditorArea::openRemote(Connection *conn, const QString &path, const QString &content)
+void EditorArea::openRemote(Connection *conn, const QString &path, const QString &content, int line, int column)
 {
     if (const int i = indexOfRemote(conn, path); i >= 0) { // opened twice while loading
-        setCurrentIndex(i);
+        focusAt(i, line, column);
         return;
     }
     const QString cache = cachePathFor(conn, path);
@@ -127,7 +162,9 @@ void EditorArea::openRemote(Connection *conn, const QString &path, const QString
     doc->setProperty(kPathProp, path);
     doc->setProperty(kLabelProp, conn->label());
     connect(doc, &KTextEditor::Document::documentSavedOrUploaded, this, [this](KTextEditor::Document *d, bool) { upload(d); });
+    m_lsp->attachDocument(doc, conn, path);
     addView(doc, conn->label() + QLatin1Char(':') + path);
+    if (line >= 0) focusAt(currentIndex(), line, column);
 }
 
 void EditorArea::upload(KTextEditor::Document *doc)
@@ -155,6 +192,17 @@ void EditorArea::upload(KTextEditor::Document *doc)
 void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
 {
     auto *view = doc->createView(this);
+    m_lsp->attachView(view);
+    // Without a KXMLGUI host the view has no context menu; give it a small one.
+    auto *menu = new QMenu(view);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("go-jump-definition")), QStringLiteral("Go to Definition (F12)"), this,
+                    [this, view] { m_lsp->gotoDefinition(view); });
+    menu->addSeparator();
+    for (const char *name : std::initializer_list<const char *>{"edit_undo", "edit_redo", nullptr, "edit_cut", "edit_copy", "edit_paste", nullptr, "edit_select_all"}) {
+        if (!name) menu->addSeparator();
+        else if (QAction *a = view->actionCollection()->action(QString::fromLatin1(name))) menu->addAction(a);
+    }
+    view->setContextMenu(menu);
     const QMimeType mime = QMimeDatabase().mimeTypeForFile(doc->url().toLocalFile());
     const int i = addTab(view, QIcon::fromTheme(mime.iconName(), QIcon::fromTheme(mime.genericIconName())), QString());
     setTabToolTip(i, tooltip);

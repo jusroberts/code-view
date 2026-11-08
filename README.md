@@ -8,7 +8,7 @@ A native KDE/Qt IDE for working with Claude Code sessions.
 
 ## Build
 
-You need Rust, Qt 6 (`qt6-base`), KTextEditor 6 (`ktexteditor`) and the `claude` CLI on your `PATH`.
+You need Rust, Qt 6 (`qt6-base`), KTextEditor 6 (`ktexteditor`), Konsole (for its terminal component), git and the `claude` CLI on your `PATH`.
 
 ```sh
 cargo build --release
@@ -17,11 +17,19 @@ cargo build --release
 
 The daemon keeps running after you close the GUI. After rebuilding, restart it with `pkill -x codeviewd`; the GUI then starts the new build.
 
+## Using it
+
+- **Sessions** are listed on the far left. Click one to switch the whole window (chat, files, changes, terminals) to it. The toggle button at the top collapses the list to initials badges (**Ctrl+Shift+B**). **Alt+1…9** jumps to a session, **Ctrl+Shift+N** starts a new one, and right-click renames or closes one.
+- **Changes** (the tab next to Files) lists the files Claude edited in this session, your uncommitted changes, and everything changed on the current branch compared to `origin/HEAD`, `main` or `master`. Click a file to see its diff; right-click to open it or discard its changes.
+- **Terminal → Show/Hide Terminal** (**Ctrl+`**) opens terminal tabs for the current session, started in its folder. For remote sessions they run `ssh -t <host>` and `cd` there. **Ctrl+Shift+`** opens another tab.
+- **Code intelligence**: opening a file starts a language server on the session's host, if one is installed there: `rust-analyzer`, `clangd`, `pyright-langserver`/`basedpyright-langserver`/`pylsp`, `typescript-language-server`, `gopls`, `kotlin-language-server`, `lua-language-server`, `zls` or `bash-language-server`. You get completion, error underlines (hover for the message), hover info and **Go to Definition** (**F12** or right-click). For Rust with rustup, install the server with `rustup component add rust-analyzer`.
+
 ## How it works
 
 - Each session runs `claude -p --input-format stream-json --output-format stream-json --permission-prompt-tool stdio` in the session's folder. Permission prompts appear in the GUI as Allow/Deny buttons. Images you paste or drop are sent to Claude inline.
 - Sessions are saved in `~/.local/state/codeview/sessions.json` and resumed with `claude --resume`. The daemon log is `~/.local/state/codeview/daemon.log`.
 - The daemon only listens on `$XDG_RUNTIME_DIR/codeview/daemon.sock`, which only your user can access. No network port is opened.
+- Git queries and language servers also run in the daemon, so the Changes panel and code intelligence work the same for remote sessions. Language servers stop when the GUI disconnects.
 - **Claude → Log In on Current Host…** runs `claude auth login` on that host and shows its output, so you can open the login link and paste the code back.
 
 ## Remote hosts
@@ -39,7 +47,7 @@ Remote files you open in the editor are cached under `~/.cache/codeview/remote/`
 ## Tests
 
 ```sh
-cargo test   # daemon tests run against a fake claude (crates/daemon/tests/fake_claude.py)
+cargo test   # daemon tests use a fake claude and a fake language server (crates/daemon/tests/)
 ```
 
 ## License

@@ -50,6 +50,14 @@ pub async fn serve() -> Result<()> {
 }
 
 async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
+    static NEXT_CLIENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let client = NEXT_CLIENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let result = serve_client(&daemon, client, stream).await;
+    daemon.client_gone(client);
+    result
+}
+
+async fn serve_client(daemon: &Arc<Daemon>, client: u64, stream: UnixStream) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut events = daemon.subscribe();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
@@ -95,9 +103,9 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
         if msg.request.is_slow() {
             let (daemon, out_tx) = (daemon.clone(), out_tx.clone());
             tokio::spawn(async move {
-                let _ = out_tx.send(respond(msg.id, daemon.handle(msg.request).await));
+                let _ = out_tx.send(respond(msg.id, daemon.handle(client, msg.request).await));
             });
-        } else if out_tx.send(respond(msg.id, daemon.handle(msg.request).await)).is_err() {
+        } else if out_tx.send(respond(msg.id, daemon.handle(client, msg.request).await)).is_err() {
             break;
         }
     }

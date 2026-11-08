@@ -64,6 +64,13 @@ pub enum Request {
     GitDiff { cwd: String, path: String, base: Option<String> },
     /// Discards uncommitted changes to `path` (restores it from HEAD; deletes it if untracked).
     GitRevert { cwd: String, path: String },
+    /// Starts a language server for `file`: the first of `candidates` (argv lists) found on PATH,
+    /// rooted at the file's git repository (or its folder). Reuses this client's server for the
+    /// same root and command. Returns `{server, root, command, existing}`.
+    LspStart { file: String, candidates: Vec<Vec<String>> },
+    /// Sends one JSON-RPC message to a language server; replies arrive as `Event::LspMessage`.
+    LspSend { server: u64, message: serde_json::Value },
+    LspStop { server: u64 },
 }
 
 impl Request {
@@ -131,6 +138,8 @@ pub enum Event {
     },
     LoginOutput { text: String },
     LoginFinished { success: bool },
+    LspMessage { server: u64, message: serde_json::Value },
+    LspExited { server: u64, error: Option<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

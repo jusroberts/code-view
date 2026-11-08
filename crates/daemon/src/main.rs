@@ -3,6 +3,7 @@ mod claude;
 mod daemon;
 mod files;
 mod git;
+mod lsp;
 mod login;
 mod server;
 

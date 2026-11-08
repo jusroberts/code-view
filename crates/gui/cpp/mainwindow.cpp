@@ -5,6 +5,7 @@
 #include "editorarea.h"
 #include "filetree.h"
 #include "logindialog.h"
+#include "lsp.h"
 #include "sessionbar.h"
 #include "terminalpanel.h"
 
@@ -137,6 +138,7 @@ MainWindow::MainWindow()
     changesDock->setObjectName(QStringLiteral("changes"));
     changesDock->setWidget(m_changes);
     m_editors->onSaved = [this] { m_changes->scheduleRefresh(); };
+    m_editors->lsp()->onStatus = [this](const QString &message) { statusBar()->showMessage(message, 8000); };
 
     // Session list (far left); the selected session drives the rest of the window.
     m_sessionBar = new SessionBar;
@@ -417,6 +419,7 @@ void MainWindow::onConnectionState(Connection *conn)
 {
     updateConnectionLabel();
     if (!conn->connected()) {
+        m_editors->lsp()->connectionLost(conn);
         if (m_newHosts.remove(conn->id())) {
             QString text = QStringLiteral("Couldn't connect to <b>%1</b>:<pre>%2</pre>")
                                .arg(conn->label().toHtmlEscaped(), conn->detail().toHtmlEscaped());
@@ -435,6 +438,7 @@ void MainWindow::onConnectionState(Connection *conn)
         if (Connection *c = Connection::find(id); c && ok) syncSessions(c, data.toArray());
     });
     if (m_files->connection() == conn) m_files->refresh();
+    m_editors->lsp()->reconnected(conn);
     refreshAuth(conn, true);
 }
 
@@ -465,6 +469,10 @@ void MainWindow::onEvent(Connection *conn, const QJsonObject &event)
     } else if (type == QLatin1String("session")) {
         if (ChatView *c = m_chats.value(chatKey(conn, event.value(QStringLiteral("session")).toString())))
             c->handleEvent(event.value(QStringLiteral("seq")).toInteger(), event.value(QStringLiteral("event")).toObject());
+    } else if (type == QLatin1String("lsp_message")) {
+        m_editors->lsp()->handleMessage(conn, event.value(QStringLiteral("server")).toInteger(), event.value(QStringLiteral("message")).toObject());
+    } else if (type == QLatin1String("lsp_exited")) {
+        m_editors->lsp()->handleExit(conn, event.value(QStringLiteral("server")).toInteger(), event.value(QStringLiteral("error")).toString());
     } else if (type == QLatin1String("login_output")) {
         if (m_login && m_login->connection() == conn) m_login->appendOutput(event.value(QStringLiteral("text")).toString());
     } else if (type == QLatin1String("login_finished")) {

@@ -252,3 +252,40 @@ fn git_status_diff_and_revert() {
 
     assert!(c.call(json!({"op": "git_status", "cwd": dir.to_str().unwrap()})).is_err());
 }
+
+#[test]
+fn lsp_relay() {
+    let dir = tempdir("lsp");
+    std::fs::write(dir.join("main.rs"), "fn main() {}\n").unwrap();
+    let file = dir.join("main.rs");
+    let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_lsp.py");
+    let d = Daemon::start(&dir);
+    let mut c = Client::connect(&d);
+
+    let candidates = json!([["no-such-language-server"], [fake]]);
+    let started = c.call(json!({"op": "lsp_start", "file": file, "candidates": candidates})).unwrap();
+    assert_eq!(started["command"], json!([fake]));
+    assert_eq!(started["existing"], false);
+    let server = started["server"].as_u64().unwrap();
+
+    let msg = json!({"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}});
+    c.call(json!({"op": "lsp_send", "server": server, "message": msg})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let reply = loop {
+        assert!(Instant::now() < deadline, "no reply from language server");
+        let m = c.read();
+        if m["kind"] == "event" && m["event"]["type"] == "lsp_message" && m["event"]["server"] == server {
+            break m["event"]["message"].clone();
+        }
+    };
+    assert_eq!(reply["id"], 7);
+    assert_eq!(reply["result"]["echo"], "initialize");
+
+    // Same client, root and command: the running server is reused.
+    let again = c.call(json!({"op": "lsp_start", "file": file, "candidates": candidates})).unwrap();
+    assert_eq!(again["server"], server);
+    assert_eq!(again["existing"], true);
+
+    let missing = c.call(json!({"op": "lsp_start", "file": file, "candidates": [["no-such-language-server"]]}));
+    assert!(missing.unwrap_err().contains("no language server found"));
+}
