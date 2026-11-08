@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QStyleOptionToolButton>
 #include <QStylePainter>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 
@@ -107,9 +108,17 @@ void DockStripes::setMinimized(QDockWidget *dock, bool minimized)
         if (stripe == m_right ? m_right->actions().isEmpty() : m_left->actions().size() == 1) stripe->hide();
         dock->show();
         dock->raise();
+        // Qt gives a panel restored into an empty dock area its minimum size; put back the old size
+        // once the layout has placed it.
+        if (const int size = m_sizes.take(dock); size > 0)
+            QTimer::singleShot(0, dock, [this, dock, size] {
+                const bool bottom = m_window->dockWidgetArea(dock) == Qt::BottomDockWidgetArea;
+                m_window->resizeDocks({dock}, {size}, bottom ? Qt::Vertical : Qt::Horizontal);
+            });
         return;
     }
     const Qt::DockWidgetArea area = m_window->dockWidgetArea(dock);
+    if (dock->isVisible()) m_sizes.insert(dock, area == Qt::BottomDockWidgetArea ? dock->height() : dock->width());
     QToolBar *stripe = area == Qt::RightDockWidgetArea ? m_right : m_left;
     auto *button = new StripeButton(dock->windowTitle().section(QStringLiteral(" — "), 0, 0), stripe == m_right ? 90 : -90);
     button->setToolTip(QStringLiteral("Show %1").arg(dock->windowTitle()));

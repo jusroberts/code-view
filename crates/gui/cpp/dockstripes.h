@@ -27,6 +27,7 @@ private:
     QToolBar *m_right;
     QAction *m_leftSpacer; // panels from the bottom area go below it
     QHash<QDockWidget *, QAction *> m_buttons;
+    QHash<QDockWidget *, int> m_sizes; // width (or height for bottom panels) when minimized
 };
 
 } // namespace cv
