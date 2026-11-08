@@ -15,6 +15,7 @@ class QJsonArray;
 
 namespace cv {
 
+class ChangesPanel;
 class ChatView;
 class Connection;
 class EditorArea;
@@ -31,6 +32,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *e) override;
+    void changeEvent(QEvent *e) override;
 
 private:
     void setupMenus();
@@ -62,6 +64,7 @@ private:
 
     EditorArea *m_editors;
     FileTree *m_files;
+    ChangesPanel *m_changes;
     QStackedWidget *m_sessionStack;
     QStackedWidget *m_chatStack;
     SessionBar *m_sessionBar;

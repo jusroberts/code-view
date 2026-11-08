@@ -197,3 +197,58 @@ fn bridge_starts_daemon_and_relays() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn git_status_diff_and_revert() {
+    let dir = tempdir("git");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let ok = Command::new("git").arg("-C").arg(&repo).args(args)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
+            .status().unwrap().success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["commit", "-q", "-m", "first"]);
+    git(&["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repo.join("b.txt"), "branch file\n").unwrap();
+    git(&["add", "b.txt"]);
+    git(&["commit", "-q", "-m", "second"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(repo.join("new.txt"), "untracked\n").unwrap();
+
+    let d = Daemon::start(&dir);
+    let mut c = Client::connect(&d);
+    let cwd = repo.to_str().unwrap();
+    let st = c.call(json!({"op": "git_status", "cwd": cwd})).unwrap();
+    assert_eq!(st["branch"], "feature");
+    assert_eq!(st["base"], "main");
+    let names = |key: &str| -> Vec<String> {
+        let mut v: Vec<String> = st[key].as_array().unwrap().iter()
+            .map(|f| format!("{}{}", f["status"].as_str().unwrap(), f["rel"].as_str().unwrap())).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names("uncommitted"), ["?new.txt", "Ma.txt"]);
+    assert_eq!(names("branch_files"), ["Ab.txt", "Ma.txt"]);
+
+    let diff = c.call(json!({"op": "git_diff", "cwd": cwd, "path": repo.join("a.txt")})).unwrap();
+    assert!(diff["diff"].as_str().unwrap().contains("+two"), "{diff}");
+    let diff = c.call(json!({"op": "git_diff", "cwd": cwd, "path": repo.join("b.txt"), "base": st["merge_base"]})).unwrap();
+    assert!(diff["diff"].as_str().unwrap().contains("+branch file"), "{diff}");
+    let diff = c.call(json!({"op": "git_diff", "cwd": cwd, "path": repo.join("new.txt")})).unwrap();
+    assert!(diff["diff"].as_str().unwrap().contains("+untracked"), "{diff}");
+
+    c.call(json!({"op": "git_revert", "cwd": cwd, "path": repo.join("a.txt")})).unwrap();
+    c.call(json!({"op": "git_revert", "cwd": cwd, "path": repo.join("new.txt")})).unwrap();
+    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\n");
+    assert!(!repo.join("new.txt").exists());
+    let st = c.call(json!({"op": "git_status", "cwd": cwd})).unwrap();
+    assert!(st["uncommitted"].as_array().unwrap().is_empty(), "{st}");
+
+    assert!(c.call(json!({"op": "git_status", "cwd": dir.to_str().unwrap()})).is_err());
+}

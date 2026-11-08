@@ -36,4 +36,10 @@ while True:
         reply = read()
         behavior = reply["response"]["response"]["behavior"]
         out({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": behavior, "is_error": behavior != "allow"}]}})
+    if text.startswith("edit "):  # "edit PATH": append a line to PATH, reported as an Edit tool call
+        path = text[5:]
+        with open(path, "a") as f:
+            f.write("edited by fake claude\n")
+        out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": path}}]}})
+        out({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "e1", "content": "ok", "is_error": False}]}})
     out({"type": "result", "subtype": "success", "is_error": False, "duration_ms": 5, "total_cost_usd": 0.0})

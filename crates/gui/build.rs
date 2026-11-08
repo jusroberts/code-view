@@ -10,6 +10,7 @@ const SOURCES: &[&str] = &[
     "cpp/logindialog.cpp",
     "cpp/sessionbar.cpp",
     "cpp/terminalpanel.cpp",
+    "cpp/changespanel.cpp",
 ];
 
 /// KDE Frameworks only ship CMake configs, so add every KF6 header dir.

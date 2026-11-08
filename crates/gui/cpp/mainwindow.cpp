@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "changespanel.h"
 #include "chatview.h"
 #include "connection.h"
 #include "editorarea.h"
@@ -116,6 +117,27 @@ MainWindow::MainWindow()
     filesDock->setWidget(m_files);
     addDockWidget(Qt::LeftDockWidgetArea, filesDock);
 
+    // Changes (tabbed with Files): Claude's edits, uncommitted work and the branch diff.
+    m_changes = new ChangesPanel;
+    m_changes->onOpenFile = [this](Connection *conn, const QString &p) { m_editors->openFile(conn, p); };
+    m_changes->onReverted = [this](Connection *conn, const QString &p) { m_editors->reloadIfUnmodified(conn, p); };
+    m_changes->onShowDiff = [this](Connection *conn, const QString &path, const QString &base, const QString &title) {
+        ChatView *c = currentChat();
+        if (!conn || !c) return;
+        QJsonObject args{{QStringLiteral("cwd"), c->cwd()}, {QStringLiteral("path"), path}};
+        if (!base.isEmpty()) args.insert(QStringLiteral("base"), base);
+        conn->request(QStringLiteral("git_diff"), args, [this, key = conn->id() + QLatin1Char(':') + path + QLatin1Char('@') + base,
+                                                         title, tip = conn->isLocal() ? path : conn->label() + QLatin1Char(':') + path](
+                                                            bool ok, const QJsonValue &data, const QString &error) {
+            if (!ok) QMessageBox::warning(this, QStringLiteral("Diff"), error);
+            else m_editors->showDiff(key, title, tip, data[QStringLiteral("diff")].toString());
+        });
+    };
+    auto *changesDock = new QDockWidget(QStringLiteral("Changes"));
+    changesDock->setObjectName(QStringLiteral("changes"));
+    changesDock->setWidget(m_changes);
+    m_editors->onSaved = [this] { m_changes->scheduleRefresh(); };
+
     // Session list (far left); the selected session drives the rest of the window.
     m_sessionBar = new SessionBar;
     m_sessionBar->onNew = [this] { newSession(); };
@@ -132,6 +154,8 @@ MainWindow::MainWindow()
     sessionsDock->setWidget(m_sessionBar);
     addDockWidget(Qt::LeftDockWidgetArea, sessionsDock);
     splitDockWidget(sessionsDock, filesDock, Qt::Horizontal);
+    tabifyDockWidget(filesDock, changesDock);
+    filesDock->raise();
 
     // Claude chat for the selected session (right).
     m_chatStack = new QStackedWidget;
@@ -462,7 +486,13 @@ void MainWindow::syncSessions(Connection *conn, const QJsonArray &sessions)
         if (!chat) {
             chat = new ChatView(conn, info);
             chat->onOpenFile = [this, chat](const QString &p) { m_editors->openFile(chat->connection(), p); };
-            chat->onFileChanged = [this, chat](const QString &p) { m_editors->reloadIfUnmodified(chat->connection(), p); };
+            chat->onFileChanged = [this, chat](const QString &p) {
+                m_editors->reloadIfUnmodified(chat->connection(), p);
+                if (chat == currentChat()) m_changes->scheduleRefresh();
+            };
+            chat->onTouchedChanged = [this, chat] {
+                if (chat == currentChat()) m_changes->setClaudeFiles(chat->touchedFiles());
+            };
             chat->onAuthProblem = [this, chat] { refreshAuth(chat->connection(), true); };
             m_chats.insert(key, chat);
             m_chatStack->addWidget(chat);
@@ -496,7 +526,10 @@ void MainWindow::updateSessionEntry(ChatView *chat)
     Connection *conn = chat->connection();
     m_sessionBar->setEntry(chatKey(conn, chat->id()), chat->name(), conn->isLocal() ? QString() : conn->label(),
                            conn->isLocal() ? chat->cwd() : conn->label() + QLatin1Char(':') + chat->cwd(), chat->status());
-    if (chat == currentChat()) updateChatTitle();
+    if (chat == currentChat()) {
+        updateChatTitle();
+        if (chat->status() == QLatin1String("idle")) m_changes->scheduleRefresh(); // a turn may have just finished
+    }
 }
 
 void MainWindow::updateChatTitle()
@@ -517,6 +550,8 @@ void MainWindow::currentSessionChanged()
 {
     ChatView *c = currentChat();
     if (c) m_files->setRoot(c->connection(), c->cwd());
+    m_changes->setSession(c ? c->connection() : nullptr, c ? c->cwd() : QString());
+    m_changes->setClaudeFiles(c ? c->touchedFiles() : QStringList());
     m_terminals->setSession(c ? chatKey(c->connection(), c->id()) : QString(), c ? c->connection() : nullptr,
                             c ? c->cwd() : QString());
     updateChatTitle();
@@ -678,6 +713,13 @@ void MainWindow::openLogin(Connection *conn)
     m_login->show();
     m_login->raise();
     m_login->start();
+}
+
+void MainWindow::changeEvent(QEvent *e)
+{
+    // Coming back from a terminal or another editor: git state may have changed.
+    if (e->type() == QEvent::ActivationChange && isActiveWindow()) m_changes->scheduleRefresh();
+    QMainWindow::changeEvent(e);
 }
 
 void MainWindow::closeEvent(QCloseEvent *e)

@@ -197,6 +197,8 @@ void ChatView::loadHistory()
     m_pending.clear();
     m_toolNames.clear();
     m_editedFiles.clear();
+    m_touched.clear();
+    if (onTouchedChanged) onTouchedChanged();
     m_transcript->clear();
     m_liveStart = -1;
     updatePermissionBar();
@@ -276,7 +278,13 @@ void ChatView::render(const QJsonObject &ev, bool live)
             appendHtml(QStringLiteral("<pre style='color:gray; margin-left:16px'>↳ %1</pre>").arg(esc(firstLines(content, 6, 600))));
         }
         const QString edited = m_editedFiles.take(toolId);
-        if (live && !isError && !edited.isEmpty() && onFileChanged) onFileChanged(edited);
+        if (!isError && !edited.isEmpty()) {
+            if (!m_touched.contains(edited)) {
+                m_touched.append(edited);
+                if (onTouchedChanged) onTouchedChanged();
+            }
+            if (live && onFileChanged) onFileChanged(edited);
+        }
     } else if (type == QLatin1String("permission_request")) {
         const QString tool = str("tool_name");
         const QJsonObject input = ev.value(QStringLiteral("input")).toObject();

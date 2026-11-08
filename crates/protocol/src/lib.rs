@@ -57,6 +57,45 @@ pub enum Request {
     /// Types a line (e.g. a pasted auth code) into the login terminal.
     LoginInput { text: String },
     CancelLogin,
+    /// Returns `GitStatus` for the repository containing `cwd`.
+    GitStatus { cwd: String },
+    /// Returns `{diff}`: unified diff of `path` against `base` (a commit), or against HEAD when absent.
+    /// Untracked files are diffed against an empty file.
+    GitDiff { cwd: String, path: String, base: Option<String> },
+    /// Discards uncommitted changes to `path` (restores it from HEAD; deletes it if untracked).
+    GitRevert { cwd: String, path: String },
+}
+
+impl Request {
+    /// Requests that may take a while and can safely run out of order.
+    pub fn is_slow(&self) -> bool {
+        matches!(self, Request::AuthStatus | Request::GitStatus { .. } | Request::GitDiff { .. })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatus {
+    /// Repository root (absolute).
+    pub root: String,
+    /// Current branch, or None when HEAD is detached.
+    pub branch: Option<String>,
+    /// What the branch is compared against, e.g. `origin/main`, and the merge-base commit.
+    pub base: Option<String>,
+    pub merge_base: Option<String>,
+    /// Working tree vs HEAD, including untracked files.
+    pub uncommitted: Vec<GitFile>,
+    /// Merge-base vs working tree (tracked files).
+    pub branch_files: Vec<GitFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitFile {
+    /// Absolute path.
+    pub path: String,
+    /// Path relative to the repository root.
+    pub rel: String,
+    /// One letter: M modified, A added, D deleted, R renamed, ? untracked, U conflict.
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

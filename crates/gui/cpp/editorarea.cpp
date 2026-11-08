@@ -22,6 +22,9 @@ namespace {
 constexpr const char *kConnProp = "cv_conn";
 constexpr const char *kPathProp = "cv_path";
 constexpr const char *kLabelProp = "cv_label";
+// Properties stored on diff documents.
+constexpr const char *kDiffProp = "cv_diff";
+constexpr const char *kTitleProp = "cv_title";
 
 QString cachePathFor(Connection *conn, const QString &remotePath)
 {
@@ -157,8 +160,38 @@ void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
     setTabToolTip(i, tooltip);
     updateTitle(view);
     connect(doc, &KTextEditor::Document::modifiedChanged, this, [this, view] { updateTitle(view); });
+    connect(doc, &KTextEditor::Document::documentSavedOrUploaded, this, [this] { if (onSaved) onSaved(); });
     setCurrentIndex(i);
     view->setFocus();
+}
+
+void EditorArea::showDiff(const QString &key, const QString &title, const QString &tooltip, const QString &diff)
+{
+    KTextEditor::Document *doc = nullptr;
+    for (int i = 0; i < count() && !doc; ++i)
+        if (viewAt(i)->document()->property(kDiffProp).toString() == key) {
+            doc = viewAt(i)->document();
+            setCurrentIndex(i);
+        }
+    const bool fresh = !doc;
+    if (fresh) {
+        doc = KTextEditor::Editor::instance()->createDocument(this);
+        doc->setProperty(kDiffProp, key);
+        doc->setProperty(kTitleProp, title);
+        doc->setHighlightingMode(QStringLiteral("Diff"));
+    }
+    doc->setReadWrite(true);
+    doc->setText(diff.isEmpty() ? QStringLiteral("No changes.\n") : diff);
+    doc->setReadWrite(false);
+    doc->setModified(false);
+    if (fresh) {
+        auto *view = doc->createView(this);
+        view->setConfigValue(QStringLiteral("dynamic-word-wrap"), false);
+        const int i = addTab(view, QIcon::fromTheme(QStringLiteral("vcs-diff")), QString());
+        setTabToolTip(i, tooltip);
+        updateTitle(view);
+        setCurrentIndex(i);
+    }
 }
 
 void EditorArea::updateTitle(KTextEditor::View *view)
@@ -166,7 +199,8 @@ void EditorArea::updateTitle(KTextEditor::View *view)
     const int i = QTabWidget::indexOf(view);
     if (i < 0) return;
     KTextEditor::Document *doc = view->document();
-    QString name = doc->documentName();
+    QString name = doc->property(kTitleProp).toString();
+    if (name.isEmpty()) name = doc->documentName();
     if (const QString label = doc->property(kLabelProp).toString(); !label.isEmpty()) name += QStringLiteral(" @") + label;
     setTabText(i, doc->isModified() ? name + QStringLiteral(" *") : name);
 }

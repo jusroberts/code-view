@@ -1,5 +1,6 @@
 #pragma once
 #include <QTabWidget>
+#include <functional>
 
 namespace KTextEditor {
 class Document;
@@ -21,10 +22,14 @@ public:
     void openFile(Connection *conn, const QString &path);
     // Reloads a file Claude edited, unless it has unsaved changes.
     void reloadIfUnmodified(Connection *conn, const QString &path);
+    // Shows a unified diff in a read-only tab; `key` identifies the tab so it's reused.
+    void showDiff(const QString &key, const QString &title, const QString &tooltip, const QString &diff);
     void saveCurrent();
     bool closeTab(int index);
     // Asks about unsaved changes in every tab; false if the user cancelled.
     bool queryCloseAll();
+
+    std::function<void()> onSaved; // any document was saved
 
 private:
     KTextEditor::View *viewAt(int index) const;

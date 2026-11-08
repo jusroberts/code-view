@@ -1,7 +1,7 @@
 //! Session state shared by all connected clients.
 
 use crate::claude::{self, Action, ClaudeProc};
-use crate::{files, login};
+use crate::{files, git, login};
 use anyhow::{Context, Result, anyhow, bail};
 use codeview_protocol::*;
 use serde::{Deserialize, Serialize};
@@ -211,6 +211,12 @@ impl Daemon {
                 Ok(Value::Null)
             }
             Request::AuthStatus => self.auth_status().await,
+            Request::GitStatus { cwd } => Ok(json!(git::status(&cwd).await?)),
+            Request::GitDiff { cwd, path, base } => Ok(json!({ "diff": git::diff(&cwd, &path, base.as_deref()).await? })),
+            Request::GitRevert { cwd, path } => {
+                git::revert(&cwd, &path).await?;
+                Ok(Value::Null)
+            }
             Request::StartLogin => {
                 let mut st = self.state.lock().unwrap();
                 if st.login.is_some() {

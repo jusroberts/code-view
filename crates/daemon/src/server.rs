@@ -90,20 +90,25 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
                 continue;
             }
         };
-        let resp = match daemon.handle(msg.request).await {
-            Ok(data) => ServerMsg::Response { id: msg.id, ok: true, data, error: None },
-            Err(e) => ServerMsg::Response {
-                id: msg.id,
-                ok: false,
-                data: serde_json::Value::Null,
-                error: Some(format!("{e:#}")),
-            },
-        };
-        if out_tx.send(resp).is_err() {
+        // Slow requests (git, auth checks) run on their own so they don't hold up the rest;
+        // everything else stays in order.
+        if msg.request.is_slow() {
+            let (daemon, out_tx) = (daemon.clone(), out_tx.clone());
+            tokio::spawn(async move {
+                let _ = out_tx.send(respond(msg.id, daemon.handle(msg.request).await));
+            });
+        } else if out_tx.send(respond(msg.id, daemon.handle(msg.request).await)).is_err() {
             break;
         }
     }
     drop(out_tx);
     let _ = write_task.await;
     Ok(())
+}
+
+fn respond(id: u64, result: anyhow::Result<serde_json::Value>) -> ServerMsg {
+    match result {
+        Ok(data) => ServerMsg::Response { id, ok: true, data, error: None },
+        Err(e) => ServerMsg::Response { id, ok: false, data: serde_json::Value::Null, error: Some(format!("{e:#}")) },
+    }
 }

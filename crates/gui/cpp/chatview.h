@@ -54,6 +54,10 @@ public:
     std::function<void(const QString &path)> onOpenFile;
     std::function<void(const QString &path)> onFileChanged; // Claude edited a file
     std::function<void()> onAuthProblem;
+    std::function<void()> onTouchedChanged; // touchedFiles() changed
+
+    // Files Claude edited successfully in this session, in first-edit order.
+    const QStringList &touchedFiles() const { return m_touched; }
 
 protected:
     void dragEnterEvent(QDragEnterEvent *e) override;
@@ -107,6 +111,7 @@ private:
     QList<Pending> m_pending;
     QHash<QString, QString> m_toolNames;   // tool_use_id -> tool name
     QHash<QString, QString> m_editedFiles; // tool_use_id -> file path (Edit/Write)
+    QStringList m_touched;
 
     bool m_historyLoaded = false;
     quint64 m_loadGeneration = 0;

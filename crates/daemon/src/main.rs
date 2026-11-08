@@ -2,6 +2,7 @@ mod bridge;
 mod claude;
 mod daemon;
 mod files;
+mod git;
 mod login;
 mod server;
 
