@@ -41,3 +41,7 @@ Remote files you open in the editor are cached under `~/.cache/codeview/remote/`
 ```sh
 cargo test   # daemon tests run against a fake claude (crates/daemon/tests/fake_claude.py)
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
