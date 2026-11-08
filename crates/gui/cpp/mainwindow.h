@@ -18,6 +18,7 @@ namespace cv {
 class ChangesPanel;
 class ChatView;
 class Connection;
+class DockStripes;
 class EditorArea;
 class FileTree;
 class LoginDialog;
@@ -72,6 +73,7 @@ private:
     QDockWidget *m_chatDock;
     TerminalPanel *m_terminals;
     QDockWidget *m_terminalDock;
+    DockStripes *m_stripes;
     QMenu *m_hostsMenu;
     QLabel *m_connLabel;
     QLabel *m_authLabel;

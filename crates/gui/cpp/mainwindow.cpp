@@ -2,6 +2,7 @@
 #include "changespanel.h"
 #include "chatview.h"
 #include "connection.h"
+#include "dockstripes.h"
 #include "editorarea.h"
 #include "filetree.h"
 #include "logindialog.h"
@@ -189,7 +190,11 @@ MainWindow::MainWindow()
     m_terminalDock->setWidget(m_terminals);
     addDockWidget(Qt::BottomDockWidgetArea, m_terminalDock);
     resizeDocks({m_terminalDock}, {260}, Qt::Vertical);
-    m_terminalDock->hide();
+
+    // Panels minimize to buttons on the window edges instead of floating or closing.
+    m_stripes = new DockStripes(this);
+    for (QDockWidget *d : {filesDock, changesDock, chatDock, m_terminalDock}) m_stripes->manage(d);
+    m_stripes->setMinimized(m_terminalDock, true);
     connect(m_terminalDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
         if (visible) m_terminals->ensureTerminal();
     });
@@ -264,13 +269,13 @@ void MainWindow::setupMenus()
     QMenu *terminal = menuBar()->addMenu(QStringLiteral("&Terminal"));
     terminal->addAction(QIcon::fromTheme(QStringLiteral("utilities-terminal")), QStringLiteral("Show/Hide &Terminal"),
                         QKeySequence(QStringLiteral("Ctrl+`")), this, [this] {
-                            m_terminalDock->setVisible(!m_terminalDock->isVisible());
-                            if (m_terminalDock->isVisible()) m_terminals->setFocus();
+                            m_stripes->setMinimized(m_terminalDock, !m_stripes->isMinimized(m_terminalDock));
+                            if (!m_stripes->isMinimized(m_terminalDock)) m_terminals->setFocus();
                         });
     terminal->addAction(QIcon::fromTheme(QStringLiteral("list-add")), QStringLiteral("&New Terminal"),
                         QKeySequence(QStringLiteral("Ctrl+Shift+`")), this, [this] {
                             m_terminals->newTerminal(); // before show(), so showing doesn't add a second one
-                            m_terminalDock->show();
+                            m_stripes->setMinimized(m_terminalDock, false);
                         });
 
     m_hostsMenu = menuBar()->addMenu(QStringLiteral("&Hosts"));
