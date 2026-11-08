@@ -109,8 +109,17 @@ void SessionBar::setCollapsed(bool collapsed)
     m_toggle->setIcon(QIcon::fromTheme(collapsed ? QStringLiteral("sidebar-expand-left") : QStringLiteral("sidebar-collapse-left")));
     m_toggle->setToolTip(collapsed ? QStringLiteral("Expand sessions") : QStringLiteral("Collapse sessions"));
     // Collapsed, the buttons stack vertically to fit the narrow bar.
-    if (auto *buttons = findChild<QBoxLayout *>(QStringLiteral("buttons")))
+    if (auto *buttons = findChild<QBoxLayout *>(QStringLiteral("buttons"))) {
         buttons->setDirection(collapsed ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+        // Match the session badges' row width (the list insets items by its spacing).
+        const int inset = collapsed ? m_list->spacing() : 0;
+        buttons->setContentsMargins(inset, 0, inset, 0);
+    }
+    for (QToolButton *b : {m_toggle, m_add}) {
+        b->setSizePolicy(collapsed ? QSizePolicy::Expanding : QSizePolicy::Preferred, QSizePolicy::Fixed);
+        if (collapsed) b->setFixedHeight(kBadge + 6);
+        else b->setFixedHeight(b->sizeHint().height());
+    }
     for (int i = 0; i < m_list->count(); ++i) refreshItem(m_list->item(i));
     applyWidth();
 }

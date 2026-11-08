@@ -21,6 +21,7 @@ class EditorArea;
 class FileTree;
 class LoginDialog;
 class SessionBar;
+class TerminalPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -65,6 +66,8 @@ private:
     QStackedWidget *m_chatStack;
     SessionBar *m_sessionBar;
     QDockWidget *m_chatDock;
+    TerminalPanel *m_terminals;
+    QDockWidget *m_terminalDock;
     QMenu *m_hostsMenu;
     QLabel *m_connLabel;
     QLabel *m_authLabel;

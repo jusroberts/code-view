@@ -5,6 +5,7 @@
 #include "filetree.h"
 #include "logindialog.h"
 #include "sessionbar.h"
+#include "terminalpanel.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -155,6 +156,18 @@ MainWindow::MainWindow()
     addDockWidget(Qt::RightDockWidgetArea, chatDock);
     resizeDocks({filesDock, chatDock}, {280, 620}, Qt::Horizontal);
 
+    // Terminals (bottom), hidden until asked for.
+    m_terminals = new TerminalPanel;
+    m_terminalDock = new QDockWidget(QStringLiteral("Terminal"));
+    m_terminalDock->setObjectName(QStringLiteral("terminal"));
+    m_terminalDock->setWidget(m_terminals);
+    addDockWidget(Qt::BottomDockWidgetArea, m_terminalDock);
+    resizeDocks({m_terminalDock}, {260}, Qt::Vertical);
+    m_terminalDock->hide();
+    connect(m_terminalDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible) m_terminals->ensureTerminal();
+    });
+
     // Status bar.
     m_connLabel = new QLabel;
     m_connLabel->setTextFormat(Qt::RichText);
@@ -221,6 +234,18 @@ void MainWindow::setupMenus()
         });
         addAction(a);
     }
+
+    QMenu *terminal = menuBar()->addMenu(QStringLiteral("&Terminal"));
+    terminal->addAction(QIcon::fromTheme(QStringLiteral("utilities-terminal")), QStringLiteral("Show/Hide &Terminal"),
+                        QKeySequence(QStringLiteral("Ctrl+`")), this, [this] {
+                            m_terminalDock->setVisible(!m_terminalDock->isVisible());
+                            if (m_terminalDock->isVisible()) m_terminals->setFocus();
+                        });
+    terminal->addAction(QIcon::fromTheme(QStringLiteral("list-add")), QStringLiteral("&New Terminal"),
+                        QKeySequence(QStringLiteral("Ctrl+Shift+`")), this, [this] {
+                            m_terminals->newTerminal(); // before show(), so showing doesn't add a second one
+                            m_terminalDock->show();
+                        });
 
     m_hostsMenu = menuBar()->addMenu(QStringLiteral("&Hosts"));
     connect(m_hostsMenu, &QMenu::aboutToShow, this, [this] { rebuildHostsMenu(); });
@@ -346,6 +371,7 @@ void MainWindow::removeHost(Connection *conn)
     for (auto it = m_chats.begin(); it != m_chats.end();) {
         if (it.value()->connection() == conn) {
             m_sessionBar->removeEntry(it.key());
+            m_terminals->removeSession(it.key());
             delete it.value();
             it = m_chats.erase(it);
         } else {
@@ -454,6 +480,7 @@ void MainWindow::syncSessions(Connection *conn, const QJsonArray &sessions)
     for (auto it = m_chats.begin(); it != m_chats.end();) {
         if (it.value()->connection() == conn && !seen.contains(it.key())) {
             m_sessionBar->removeEntry(it.key());
+            m_terminals->removeSession(it.key());
             delete it.value();
             it = m_chats.erase(it);
         } else {
@@ -488,7 +515,10 @@ Connection *MainWindow::currentConnection() const
 
 void MainWindow::currentSessionChanged()
 {
-    if (ChatView *c = currentChat()) m_files->setRoot(c->connection(), c->cwd());
+    ChatView *c = currentChat();
+    if (c) m_files->setRoot(c->connection(), c->cwd());
+    m_terminals->setSession(c ? chatKey(c->connection(), c->id()) : QString(), c ? c->connection() : nullptr,
+                            c ? c->cwd() : QString());
     updateChatTitle();
     updateAuthLabel();
     updateConnectionLabel();
