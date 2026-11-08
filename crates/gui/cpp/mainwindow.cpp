@@ -75,8 +75,11 @@ QString pickRemoteFolder(QWidget *parent, Connection *conn, const QString &start
     dlg.setWindowTitle(QStringLiteral("Choose a folder on %1").arg(conn->label()));
     auto *path = new QLineEdit(start);
     auto *tree = new FileTree(true);
+    tree->setShowHidden(false);
     tree->onSelect = [path](const QString &p) { path->setText(p); };
-    tree->setRoot(conn, start.isEmpty() ? conn->home() : start);
+    // Show the whole tree from / with the starting folder selected, so you can still go up.
+    tree->reveal(start.isEmpty() ? conn->home() : start);
+    tree->setRoot(conn, QStringLiteral("/"));
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);

@@ -1,6 +1,8 @@
 #include "filetree.h"
 #include "connection.h"
 
+#include <QCheckBox>
+#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -9,14 +11,16 @@
 #include <QLabel>
 #include <QMimeDatabase>
 #include <QPointer>
+#include <QShortcut>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 namespace cv {
 
 namespace {
-enum Role { PathRole = Qt::UserRole, IsDirRole, LoadedRole };
+enum Role { PathRole = Qt::UserRole, IsDirRole, LoadedRole, DotRole };
 const QStringList kHidden{QStringLiteral(".git")};
 } // namespace
 
@@ -32,6 +36,13 @@ FileTree::FileTree(bool dirsOnly, QWidget *parent)
     refreshButton->setToolTip(QStringLiteral("Refresh"));
     refreshButton->setAutoRaise(true);
     connect(refreshButton, &QToolButton::clicked, this, [this] { refresh(); });
+    m_hiddenBox = new QCheckBox(QStringLiteral("Show hidden"));
+    m_hiddenBox->setChecked(m_showHidden);
+    m_hiddenBox->setToolTip(QStringLiteral("Show files and folders starting with a dot (Ctrl+H)"));
+    connect(m_hiddenBox, &QCheckBox::toggled, this, [this](bool on) { setShowHidden(on); });
+    auto *hiddenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), this);
+    hiddenShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(hiddenShortcut, &QShortcut::activated, m_hiddenBox, &QCheckBox::toggle);
 
     m_tree = new QTreeWidget;
     m_tree->setHeaderHidden(true);
@@ -49,6 +60,7 @@ FileTree::FileTree(bool dirsOnly, QWidget *parent)
 
     auto *header = new QHBoxLayout;
     header->addWidget(m_rootLabel, 1);
+    header->addWidget(m_hiddenBox);
     header->addWidget(refreshButton);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -62,6 +74,42 @@ void FileTree::setRoot(Connection *conn, const QString &path)
     m_conn = conn;
     m_root = path;
     refresh();
+}
+
+void FileTree::setShowHidden(bool show)
+{
+    m_showHidden = show;
+    m_hiddenBox->setChecked(show);
+    for (QTreeWidgetItemIterator it(m_tree); *it; ++it) {
+        if ((*it)->data(0, DotRole).toBool()) (*it)->setHidden(!show);
+    }
+}
+
+void FileTree::reveal(const QString &path)
+{
+    m_reveal = QDir::cleanPath(path);
+}
+
+void FileTree::revealStep(const QList<QTreeWidgetItem *> &items)
+{
+    if (m_reveal.isEmpty()) return;
+    for (QTreeWidgetItem *item : items) {
+        QString p = item->data(0, PathRole).toString();
+        if (p == m_reveal) {
+            m_reveal.clear();
+            item->setHidden(false);
+            m_tree->setCurrentItem(item);
+            m_tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+        if (!p.endsWith(QLatin1Char('/'))) p += QLatin1Char('/');
+        if (m_reveal.startsWith(p)) {
+            item->setHidden(false); // a dot-folder on the way is shown anyway
+            item->setExpanded(true); // loads its children, which continue the walk
+            return;
+        }
+    }
+    m_reveal.clear(); // path no longer exists
 }
 
 void FileTree::refresh()
@@ -103,6 +151,7 @@ void FileTree::load(QTreeWidgetItem *parent, const QString &path)
                 auto *item = new QTreeWidgetItem({name});
                 item->setData(0, PathRole, e.value(QStringLiteral("path")).toString());
                 item->setData(0, IsDirRole, isDir);
+                if (name.startsWith(QLatin1Char('.'))) item->setData(0, DotRole, true);
                 if (isDir) {
                     item->setIcon(0, QIcon::fromTheme(QStringLiteral("folder")));
                     item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
@@ -119,6 +168,11 @@ void FileTree::load(QTreeWidgetItem *parent, const QString &path)
             } else {
                 self->m_tree->addTopLevelItems(items);
             }
+            // Hiding only works once items are in the tree.
+            for (QTreeWidgetItem *item : items) {
+                if (item->data(0, DotRole).toBool()) item->setHidden(!self->m_showHidden);
+            }
+            self->revealStep(items);
         });
 }
 

@@ -5,6 +5,7 @@
 class QTreeWidget;
 class QTreeWidgetItem;
 class QLabel;
+class QCheckBox;
 
 namespace cv {
 
@@ -20,18 +21,26 @@ public:
     Connection *connection() const { return m_conn; }
     QString root() const { return m_root; }
     void refresh();
+    // Dot-files and dot-folders; Ctrl+H toggles while the tree has focus.
+    void setShowHidden(bool show);
+    // Expands the tree down to `path` and selects it once loaded. Call before setRoot().
+    void reveal(const QString &path);
 
     std::function<void(const QString &path)> onOpenFile; // a file was activated
     std::function<void(const QString &path)> onSelect;   // the current item changed
 
 private:
     void load(QTreeWidgetItem *parent, const QString &path);
+    void revealStep(const QList<QTreeWidgetItem *> &items);
 
     bool m_dirsOnly;
     QTreeWidget *m_tree;
     QLabel *m_rootLabel;
+    QCheckBox *m_hiddenBox;
+    bool m_showHidden = true;
     Connection *m_conn = nullptr;
     QString m_root;
+    QString m_reveal;
     quint64 m_generation = 0;
 };
 
