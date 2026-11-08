@@ -18,7 +18,7 @@ pub struct ClientMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
-    /// Returns `{protocol, version, hostname, home}`.
+    /// Returns `{protocol, version, commit, hostname, home}`; `commit` is the git commit it was built from.
     Hello,
     /// Returns `[SessionInfo]`.
     ListSessions,

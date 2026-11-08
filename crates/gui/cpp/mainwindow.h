@@ -60,6 +60,8 @@ private:
     void closeSession(ChatView *chat);
     // Lists Claude's saved conversations for a folder and opens the chosen one as a session.
     void resumeConversation(Connection *conn, const QString &cwd);
+    void installDaemon(Connection *conn);
+    bool daemonOutdated(Connection *conn) const;
     void requestCreateSession(Connection *conn, const QJsonObject &args, const QString &title);
 
     void refreshAuth(Connection *conn, bool promptIfLoggedOut = false);
@@ -88,6 +90,7 @@ private:
     QHash<QString, QJsonObject> m_auth; // connection id -> auth status
     QSet<QString> m_authPrompted;       // connections we already offered a login for
     QSet<QString> m_newHosts;           // hosts added this run, awaiting first connect
+    QString m_latestCommit;             // main on GitHub, once known
     QString m_selectOnCreate;           // chat key to focus once it appears
 };
 

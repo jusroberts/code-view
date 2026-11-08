@@ -2,6 +2,7 @@
 #include "changespanel.h"
 #include "chatview.h"
 #include "connection.h"
+#include "daemoninstaller.h"
 #include "dockstripes.h"
 #include "editorarea.h"
 #include "filetree.h"
@@ -34,6 +35,7 @@
 #include <QTextStream>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QProcess>
 #include <QPointer>
 #include <QLocale>
 #include <QDateTime>
@@ -67,8 +69,7 @@ QStringList sshConfigHosts()
 QString connectionHint(const QString &detail)
 {
     if (detail.contains(QLatin1String("command not found")) || detail.contains(QLatin1String("No such file")))
-        return QStringLiteral("codeviewd isn't installed on that host (or isn't on its PATH). Install it there, e.g. "
-                              "<tt>cargo install --path crates/daemon</tt> from this repo.");
+        return QStringLiteral("codeviewd isn't installed on that host (or isn't on its PATH). Use Hosts → this host → Install Daemon.");
     if (detail.contains(QLatin1String("Host key verification failed")))
         return QStringLiteral("SSH doesn't know this host's key yet. Run <tt>ssh HOST</tt> once in a terminal to accept it.");
     if (detail.contains(QLatin1String("Permission denied")))
@@ -225,6 +226,35 @@ MainWindow::MainWindow()
     addConnection(QString::fromLatin1(Connection::kLocalId), QStringLiteral("local"), QString());
     loadHosts();
     updateConnectionLabel();
+
+    // Learn the latest daemon commit so the Hosts menu can offer updates.
+    auto *lsRemote = new QProcess(this);
+    connect(lsRemote, &QProcess::finished, this, [this, lsRemote](int code) {
+        if (code == 0) m_latestCommit = QString::fromLatin1(lsRemote->readAllStandardOutput()).section(QLatin1Char('\t'), 0, 0).trimmed();
+        lsRemote->deleteLater();
+        for (Connection *c : std::as_const(m_conns))
+            if (daemonOutdated(c)) statusBar()->showMessage(QStringLiteral("A codeviewd update is available for %1 (Hosts menu).").arg(c->label()), 15000);
+    });
+    connect(lsRemote, &QProcess::errorOccurred, lsRemote, &QObject::deleteLater);
+    lsRemote->start(QStringLiteral("git"), {QStringLiteral("ls-remote"), QString::fromLatin1(kRepoUrl), QStringLiteral("refs/heads/main")});
+}
+
+bool MainWindow::daemonOutdated(Connection *conn) const
+{
+    const QString commit = conn->daemonCommit();
+    return !conn->isLocal() && conn->connected() && !m_latestCommit.isEmpty() && !commit.isEmpty() &&
+           !m_latestCommit.startsWith(commit);
+}
+
+void MainWindow::installDaemon(Connection *conn)
+{
+    if (conn->connected() &&
+        QMessageBox::question(this, QStringLiteral("Update codeviewd"),
+                              QStringLiteral("Build the latest codeviewd from GitHub on %1 and restart it?\n\n"
+                                             "Claude turns in progress there will stop. Sessions carry on after the restart.")
+                                  .arg(conn->label())) != QMessageBox::Yes)
+        return;
+    if (runDaemonInstaller(this, conn->label(), conn->sshTarget())) conn->open();
 }
 
 MainWindow::~MainWindow()
@@ -324,6 +354,14 @@ void MainWindow::rebuildHostsMenu()
         sub->addAction(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Reconnect"), this, [conn] { conn->open(); });
         if (!conn->isLocal()) {
             sub->addSeparator();
+            if (conn->connected()) {
+                QString version = QStringLiteral("codeviewd %1").arg(conn->daemonCommit().isEmpty() ? QStringLiteral("(unknown version)") : conn->daemonCommit());
+                if (daemonOutdated(conn)) version += QStringLiteral(" — update available");
+                sub->addAction(version)->setEnabled(false);
+            }
+            sub->addAction(QIcon::fromTheme(QStringLiteral("system-software-update")),
+                           conn->connected() ? QStringLiteral("Update Daemon…") : QStringLiteral("Install Daemon…"), this,
+                           [this, conn] { installDaemon(conn); });
             sub->addAction(QIcon::fromTheme(QStringLiteral("list-remove")), QStringLiteral("Remove Host"), this,
                            [this, conn] { removeHost(conn); });
         }
@@ -442,14 +480,22 @@ void MainWindow::onConnectionState(Connection *conn)
         if (m_newHosts.remove(conn->id())) {
             QString text = QStringLiteral("Couldn't connect to <b>%1</b>:<pre>%2</pre>")
                                .arg(conn->label().toHtmlEscaped(), conn->detail().toHtmlEscaped());
-            if (const QString hint = connectionHint(conn->detail()); !hint.isEmpty())
-                text += QString(hint).replace(QLatin1String("HOST"), conn->sshTarget().toHtmlEscaped());
+            const QString hint = connectionHint(conn->detail());
+            if (hint.startsWith(QLatin1String("codeviewd isn't installed"))) {
+                text += QStringLiteral("<p>codeviewd isn't installed on that host (or isn't on its PATH). Install it now? "
+                                       "This builds it from GitHub on the host, which needs git and Rust there.</p>");
+                if (QMessageBox::question(this, QStringLiteral("Remote Host"), text) == QMessageBox::Yes) installDaemon(conn);
+                return;
+            }
+            if (!hint.isEmpty()) text += QString(hint).replace(QLatin1String("HOST"), conn->sshTarget().toHtmlEscaped());
             text += QStringLiteral("<p>Code View will keep retrying in the background.</p>");
             QMessageBox::warning(this, QStringLiteral("Remote Host"), text);
         }
         return;
     }
     m_newHosts.remove(conn->id());
+    if (daemonOutdated(conn))
+        statusBar()->showMessage(QStringLiteral("A codeviewd update is available for %1 (Hosts menu).").arg(conn->label()), 15000);
     // Reload transcripts: events may have been missed while disconnected.
     for (ChatView *c : std::as_const(m_chats))
         if (c->connection() == conn) c->loadHistory();

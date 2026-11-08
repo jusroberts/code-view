@@ -39,7 +39,7 @@ The daemon keeps running after you close the GUI. After rebuilding, restart it w
 
 Setup on each remote host:
 
-1. Install `codeviewd` somewhere a login shell finds it, for example: `cargo install --path crates/daemon` from this repo (installs to `~/.cargo/bin`).
+1. Install `codeviewd`: when you add a host that doesn't have it, Code View offers to install it (also **Hosts → *host* → Install Daemon…**). This clones `main` from GitHub into `~/.local/share/codeview/src` on the host and runs `cargo install`, so the host needs `git` and Rust ([rustup](https://rustup.rs)). **Hosts → *host* → Update Daemon…** pulls and rebuilds it the same way, then restarts it; the host's menu shows when GitHub has a newer version. To install by hand instead: `cargo install --path crates/daemon` from this repo (installs to `~/.cargo/bin`).
 2. Install `claude` there. If it isn't logged in, use **Hosts → *host* → Log In to Claude…**.
 3. Make sure you can run `ssh <target>` without a password prompt and that the host key is already accepted. Code View uses `BatchMode=yes`, so it can't answer prompts.
 

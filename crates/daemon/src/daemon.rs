@@ -164,6 +164,7 @@ impl Daemon {
             Request::Hello => Ok(json!({
                 "protocol": PROTOCOL_VERSION,
                 "version": env!("CARGO_PKG_VERSION"),
+                "commit": env!("CODEVIEW_COMMIT"),
                 "hostname": hostname(),
                 "home": home_dir(),
             })),

@@ -32,6 +32,7 @@ public:
     QString detail() const { return m_detail; } // last disconnect reason
     QString hostname() const { return m_hostname.isEmpty() ? m_label : m_hostname; }
     QString home() const { return m_home; }
+    QString daemonCommit() const { return m_commit; } // git commit the daemon was built from
 
     // (Re)starts the transport; it reconnects by itself after failures.
     void open();
@@ -47,7 +48,7 @@ public:
 
 private:
     QString m_id, m_label, m_sshTarget;
-    QString m_hostname, m_home, m_detail;
+    QString m_hostname, m_home, m_detail, m_commit;
     quint64 m_nextId = 1;
     bool m_connected = false;
     std::unordered_map<quint64, Callback> m_pending;

@@ -84,6 +84,7 @@ void Connection::handleConnection(bool connected, const QString &detail)
         if (ok) {
             m_hostname = data[QStringLiteral("hostname")].toString();
             m_home = data[QStringLiteral("home")].toString();
+            m_commit = data[QStringLiteral("commit")].toString();
         }
         if (onStateChanged) onStateChanged();
     });

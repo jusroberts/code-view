@@ -13,6 +13,7 @@ const SOURCES: &[&str] = &[
     "cpp/changespanel.cpp",
     "cpp/lsp.cpp",
     "cpp/dockstripes.cpp",
+    "cpp/daemoninstaller.cpp",
 ];
 
 /// KDE Frameworks only ship CMake configs, so add every KF6 header dir.
