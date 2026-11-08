@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 const SOURCES: &[&str] = &[
     "cpp/app.cpp",
-    "cpp/daemonclient.cpp",
+    "cpp/connection.cpp",
     "cpp/mainwindow.cpp",
     "cpp/chatview.cpp",
     "cpp/editorarea.cpp",

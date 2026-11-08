@@ -6,28 +6,34 @@ mod client;
 #[cxx::bridge(namespace = "cv")]
 mod ffi {
     extern "Rust" {
-        /// Starts the background connection to codeviewd (called once the Qt app exists).
-        fn client_start();
-        /// Sends one `ClientMsg` JSON object to the daemon.
-        fn client_send(json: &str);
+        /// Opens (or reopens) connection `conn` to a daemon: the local one when
+        /// `ssh_target` is empty, otherwise via `ssh <ssh_target> codeviewd bridge`.
+        fn client_open(conn: &str, ssh_target: &str);
+        fn client_close(conn: &str);
+        /// Sends one `ClientMsg` JSON object over connection `conn`.
+        fn client_send(conn: &str, json: &str);
     }
 
     unsafe extern "C++" {
         include!("codeview/cpp/app.h");
         fn run_app() -> i32;
         /// Thread-safe: queues one `ServerMsg` JSON line onto the Qt thread.
-        fn deliver_message(json: &str);
+        fn deliver_message(conn: &str, json: &str);
         /// Thread-safe: reports connection state changes.
-        fn deliver_connection_state(connected: bool, detail: &str);
+        fn deliver_connection_state(conn: &str, connected: bool, detail: &str);
     }
 }
 
-fn client_start() {
-    client::start();
+fn client_open(conn: &str, ssh_target: &str) {
+    client::open(conn, ssh_target);
 }
 
-fn client_send(json: &str) {
-    client::send(json);
+fn client_close(conn: &str) {
+    client::close(conn);
+}
+
+fn client_send(conn: &str, json: &str) {
+    client::send(conn, json);
 }
 
 fn main() {

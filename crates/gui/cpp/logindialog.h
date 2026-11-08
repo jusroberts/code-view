@@ -9,12 +9,16 @@ class QLabel;
 
 namespace cv {
 
+class Connection;
+
 // Shows `claude auth login` running on the daemon's host and lets you open
 // the login URL here and paste the resulting code back.
 class LoginDialog : public QDialog
 {
 public:
-    LoginDialog(const QString &host, QWidget *parent = nullptr);
+    LoginDialog(Connection *conn, QWidget *parent = nullptr);
+
+    Connection *connection() const { return m_conn; }
 
     void start();
     void appendOutput(const QString &text);
@@ -22,10 +26,11 @@ public:
 
     std::function<void()> onFinished;
 
-protected:
+    // Also cancels a running login.
     void reject() override;
 
 private:
+    Connection *m_conn;
     QPlainTextEdit *m_output;
     QLineEdit *m_input;
     QPushButton *m_openUrl;

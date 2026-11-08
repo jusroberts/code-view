@@ -16,6 +16,8 @@ class QMimeData;
 
 namespace cv {
 
+class Connection;
+
 // Prompt box: Enter sends, Shift+Enter adds a newline, pasted/dropped images become attachments.
 class PromptEdit : public QPlainTextEdit
 {
@@ -34,7 +36,9 @@ protected:
 class ChatView : public QWidget
 {
 public:
-    explicit ChatView(const QJsonObject &info, QWidget *parent = nullptr);
+    ChatView(Connection *conn, const QJsonObject &info, QWidget *parent = nullptr);
+
+    Connection *connection() const { return m_conn; }
 
     QString id() const { return m_info.value(QStringLiteral("id")).toString(); }
     QString name() const { return m_info.value(QStringLiteral("name")).toString(); }
@@ -87,6 +91,7 @@ private:
     QString toolSummary(const QString &name, const QJsonObject &input) const;
     QString displayPath(const QString &path) const;
 
+    Connection *m_conn;
     QJsonObject m_info;
     QTextBrowser *m_transcript;
     PromptEdit *m_input;

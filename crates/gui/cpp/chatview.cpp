@@ -1,5 +1,5 @@
 #include "chatview.h"
-#include "daemonclient.h"
+#include "connection.h"
 
 #include <QBuffer>
 #include <QDesktopServices>
@@ -84,8 +84,9 @@ void PromptEdit::insertFromMimeData(const QMimeData *source)
 
 // ---- ChatView ----
 
-ChatView::ChatView(const QJsonObject &info, QWidget *parent)
+ChatView::ChatView(Connection *conn, const QJsonObject &info, QWidget *parent)
     : QWidget(parent)
+    , m_conn(conn)
     , m_info(info)
 {
     setAcceptDrops(true);
@@ -140,7 +141,7 @@ ChatView::ChatView(const QJsonObject &info, QWidget *parent)
     m_stopButton->setToolTip(QStringLiteral("Interrupt Claude"));
     connect(m_sendButton, &QPushButton::clicked, this, [this] { send(); });
     connect(m_stopButton, &QPushButton::clicked, this, [this] {
-        DaemonClient::instance().request(QStringLiteral("interrupt"), {{QStringLiteral("session"), id()}});
+        m_conn->request(QStringLiteral("interrupt"), {{QStringLiteral("session"), id()}});
     });
     auto *buttons = new QHBoxLayout;
     buttons->addWidget(m_statusLabel, 1);
@@ -202,7 +203,7 @@ void ChatView::loadHistory()
 
     const quint64 generation = ++m_loadGeneration;
     QPointer<ChatView> self(this);
-    DaemonClient::instance().request(
+    m_conn->request(
         QStringLiteral("get_history"), {{QStringLiteral("session"), id()}},
         [self, generation](bool ok, const QJsonValue &data, const QString &error) {
             if (!self || generation != self->m_loadGeneration) return;
@@ -423,7 +424,7 @@ void ChatView::answer(bool allow)
     if (m_pending.isEmpty()) return;
     const QString rid = m_pending.first().requestId;
     QPointer<ChatView> self(this);
-    DaemonClient::instance().request(
+    m_conn->request(
         QStringLiteral("answer_permission"),
         {{QStringLiteral("session"), id()}, {QStringLiteral("request_id"), rid}, {QStringLiteral("allow"), allow}},
         [self](bool ok, const QJsonValue &, const QString &error) {
@@ -547,7 +548,7 @@ void ChatView::send()
                                   {QStringLiteral("data"), QString::fromLatin1(a.base64)}});
     m_sendButton->setEnabled(false);
     QPointer<ChatView> self(this);
-    DaemonClient::instance().request(
+    m_conn->request(
         QStringLiteral("send_message"),
         {{QStringLiteral("session"), id()}, {QStringLiteral("text"), text}, {QStringLiteral("images"), images}},
         [self](bool ok, const QJsonValue &, const QString &error) {

@@ -159,3 +159,41 @@ fn chat_permission_and_resume() {
     assert_eq!(c.call(json!({"op": "list_sessions"})).unwrap(), json!([]));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn bridge_starts_daemon_and_relays() {
+    use std::process::Stdio;
+    let dir = tempdir("bridge");
+    let socket = dir.join("sock/daemon.sock");
+    let mut bridge = Command::new(env!("CARGO_BIN_EXE_codeviewd"))
+        .arg("bridge")
+        .env("CODEVIEW_SOCKET", &socket)
+        .env("CODEVIEW_STATE_DIR", dir.join("state"))
+        .env("CODEVIEW_CLAUDE_BIN", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_claude.py"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = bridge.stdin.take().unwrap();
+    let mut stdout = BufReader::new(bridge.stdout.take().unwrap());
+    writeln!(stdin, "{}", json!({"id": 7, "request": {"op": "hello"}})).unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let resp: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(resp["id"], 7);
+    assert_eq!(resp["data"]["protocol"], 1);
+
+    // Closing stdin ends the bridge, but the daemon it started keeps running.
+    drop(stdin);
+    assert!(bridge.wait().unwrap().success());
+    assert!(UnixStream::connect(&socket).is_ok());
+
+    // Shut the daemon down via its socket path owner: find it by the socket and SIGTERM it.
+    let out = Command::new("fuser").arg(&socket).output();
+    if let Ok(out) = out {
+        for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+            let _ = Command::new("kill").arg(pid).status();
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

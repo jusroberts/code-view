@@ -1,5 +1,5 @@
 #include "logindialog.h"
-#include "daemonclient.h"
+#include "connection.h"
 
 #include <QDesktopServices>
 #include <QDialogButtonBox>
@@ -17,9 +17,11 @@
 
 namespace cv {
 
-LoginDialog::LoginDialog(const QString &host, QWidget *parent)
+LoginDialog::LoginDialog(Connection *conn, QWidget *parent)
     : QDialog(parent)
+    , m_conn(conn)
 {
+    const QString host = conn->hostname();
     setWindowTitle(QStringLiteral("Log in to Claude on %1").arg(host));
     resize(720, 420);
 
@@ -39,7 +41,7 @@ LoginDialog::LoginDialog(const QString &host, QWidget *parent)
     m_input = new QLineEdit;
     m_input->setPlaceholderText(QStringLiteral("Paste the code here and press Enter (empty Enter sends Enter)"));
     connect(m_input, &QLineEdit::returnPressed, this, [this] {
-        DaemonClient::instance().request(QStringLiteral("login_input"), {{QStringLiteral("text"), m_input->text()}});
+        m_conn->request(QStringLiteral("login_input"), {{QStringLiteral("text"), m_input->text()}});
         m_input->clear();
     });
 
@@ -66,7 +68,7 @@ void LoginDialog::start()
     m_status->setText(QStringLiteral("Starting…"));
     m_running = true;
     QPointer<LoginDialog> self(this);
-    DaemonClient::instance().request(QStringLiteral("start_login"), {}, [self](bool ok, const QJsonValue &, const QString &error) {
+    m_conn->request(QStringLiteral("start_login"), {}, [self](bool ok, const QJsonValue &, const QString &error) {
         if (!self) return;
         if (ok) {
             self->m_status->setText(QStringLiteral("Waiting for login…"));
@@ -98,7 +100,7 @@ void LoginDialog::finished(bool success)
 
 void LoginDialog::reject()
 {
-    if (m_running) DaemonClient::instance().request(QStringLiteral("cancel_login"));
+    if (m_running) m_conn->request(QStringLiteral("cancel_login"));
     m_running = false;
     QDialog::reject();
 }

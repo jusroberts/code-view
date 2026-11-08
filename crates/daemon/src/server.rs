@@ -57,7 +57,10 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
     let write_task = tokio::spawn(async move {
         loop {
             let msg = tokio::select! {
-                Some(m) = out_rx.recv() => m,
+                m = out_rx.recv() => match m {
+                    Some(m) => m,
+                    None => break, // client finished; all replies written
+                },
                 ev = events.recv() => match ev {
                     Ok(m) => m,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -66,7 +69,6 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
-                else => break,
             };
             let mut line = serde_json::to_string(&msg).expect("serializable");
             line.push('\n');
@@ -102,6 +104,6 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
         }
     }
     drop(out_tx);
-    write_task.abort();
+    let _ = write_task.await;
     Ok(())
 }
