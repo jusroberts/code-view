@@ -63,6 +63,7 @@ private:
     void openLogin(Connection *conn);
 
     EditorArea *m_editors;
+    QStackedWidget *m_editorStack; // placeholder or the editor tabs
     FileTree *m_files;
     ChangesPanel *m_changes;
     QStackedWidget *m_sessionStack;

@@ -17,6 +17,7 @@
 #include <QMimeDatabase>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 
 namespace cv {
@@ -29,6 +30,8 @@ constexpr const char *kLabelProp = "cv_label";
 // Properties stored on diff documents.
 constexpr const char *kDiffProp = "cv_diff";
 constexpr const char *kTitleProp = "cv_title";
+// Property stored on views (tabs): the session they belong to; empty means every session.
+constexpr const char *kSessionProp = "cv_session";
 
 QString cachePathFor(Connection *conn, const QString &remotePath)
 {
@@ -66,7 +69,7 @@ EditorArea::EditorArea(QWidget *parent)
 
 EditorArea::~EditorArea()
 {
-    QList<KTextEditor::Document *> docs;
+    QSet<KTextEditor::Document *> docs; // a document can have a view in several sessions
     for (int i = 0; i < count(); ++i)
         if (auto *v = viewAt(i)) docs << v->document();
     qDeleteAll(docs);
@@ -75,7 +78,7 @@ EditorArea::~EditorArea()
 
 void EditorArea::gotoDefinition()
 {
-    if (auto *v = viewAt(currentIndex())) m_lsp->gotoDefinition(v);
+    if (auto *v = currentView()) m_lsp->gotoDefinition(v);
 }
 
 void EditorArea::focusAt(int index, int line, int column)
@@ -88,28 +91,108 @@ void EditorArea::focusAt(int index, int line, int column)
 
 KTextEditor::View *EditorArea::viewAt(int index) const { return qobject_cast<KTextEditor::View *>(widget(index)); }
 
-int EditorArea::indexOfLocal(const QString &canonicalPath) const
+KTextEditor::View *EditorArea::currentView() const
 {
-    for (int i = 0; i < count(); ++i) {
-        KTextEditor::Document *d = viewAt(i)->document();
-        if (!d->property(kConnProp).isValid() && d->url().toLocalFile() == canonicalPath) return i;
-    }
+    const int i = currentIndex();
+    return i >= 0 && isTabVisible(i) ? viewAt(i) : nullptr;
+}
+
+KTextEditor::Document *EditorArea::findDoc(const std::function<bool(KTextEditor::Document *)> &match) const
+{
+    for (int i = 0; i < count(); ++i)
+        if (KTextEditor::Document *d = viewAt(i)->document(); match(d)) return d;
+    return nullptr;
+}
+
+KTextEditor::Document *EditorArea::localDoc(const QString &canonicalPath) const
+{
+    return findDoc([&](KTextEditor::Document *d) {
+        return !d->property(kConnProp).isValid() && !d->property(kDiffProp).isValid() && d->url().toLocalFile() == canonicalPath;
+    });
+}
+
+KTextEditor::Document *EditorArea::remoteDoc(Connection *conn, const QString &path) const
+{
+    return findDoc([&](KTextEditor::Document *d) {
+        return d->property(kConnProp).toString() == conn->id() && d->property(kPathProp).toString() == path;
+    });
+}
+
+int EditorArea::indexInSession(KTextEditor::Document *doc) const
+{
+    for (int i = 0; i < count(); ++i)
+        if (viewAt(i)->document() == doc && isTabVisible(i)) return i;
     return -1;
 }
 
-int EditorArea::indexOfRemote(Connection *conn, const QString &path) const
+int EditorArea::addTabForSession(QWidget *view, const QIcon &icon, const QString &tooltip)
 {
+    view->setProperty(kSessionProp, m_session);
+    const int i = addTab(view, icon, QString());
+    setTabToolTip(i, tooltip);
+    return i;
+}
+
+void EditorArea::setSession(const QString &key)
+{
+    if (key == m_session) return;
+    m_lastCurrent.insert(m_session, currentView());
+    m_session = key;
     for (int i = 0; i < count(); ++i) {
-        KTextEditor::Document *d = viewAt(i)->document();
-        if (d->property(kConnProp).toString() == conn->id() && d->property(kPathProp).toString() == path) return i;
+        const QString s = widget(i)->property(kSessionProp).toString();
+        setTabVisible(i, s.isEmpty() || s == key);
     }
-    return -1;
+    if (QWidget *w = m_lastCurrent.value(key); w && isTabVisible(indexOf(w))) setCurrentWidget(w);
+    else for (int i = 0; i < count(); ++i)
+        if (isTabVisible(i)) {
+            setCurrentIndex(i);
+            break;
+        }
+}
+
+bool EditorArea::hasVisibleTabs() const
+{
+    for (int i = 0; i < count(); ++i)
+        if (isTabVisible(i)) return true;
+    return false;
+}
+
+bool EditorArea::closeSession(const QString &key)
+{
+    for (int i = count() - 1; i >= 0; --i)
+        if (widget(i)->property(kSessionProp).toString() == key && !closeTab(i)) return false;
+    return true;
+}
+
+void EditorArea::removeSession(const QString &key)
+{
+    m_lastCurrent.remove(key);
+    for (int i = count() - 1; i >= 0; --i) {
+        KTextEditor::View *v = viewAt(i);
+        if (v->property(kSessionProp).toString() != key) continue;
+        KTextEditor::Document *doc = v->document();
+        if (doc->views().size() > 1) {
+            removeTab(i);
+            delete v;
+        } else if (doc->isModified()) {
+            v->setProperty(kSessionProp, QString());
+            setTabVisible(i, true);
+        } else {
+            removeTab(i);
+            delete doc;
+        }
+    }
 }
 
 void EditorArea::openFile(Connection *conn, const QString &path, int line, int column)
 {
     if (conn && !conn->isLocal()) {
-        if (const int i = indexOfRemote(conn, path); i >= 0) {
+        if (KTextEditor::Document *doc = remoteDoc(conn, path)) {
+            int i = indexInSession(doc);
+            if (i < 0) {
+                addView(doc, conn->label() + QLatin1Char(':') + path);
+                i = currentIndex();
+            }
             focusAt(i, line, column);
             return;
         }
@@ -130,7 +213,12 @@ void EditorArea::openFile(Connection *conn, const QString &path, int line, int c
         QMessageBox::warning(this, QStringLiteral("Open file"), QStringLiteral("%1 doesn't exist.").arg(path));
         return;
     }
-    if (const int i = indexOfLocal(canonical); i >= 0) {
+    if (KTextEditor::Document *doc = localDoc(canonical)) {
+        int i = indexInSession(doc);
+        if (i < 0) {
+            addView(doc, canonical);
+            i = currentIndex();
+        }
         focusAt(i, line, column);
         return;
     }
@@ -147,8 +235,8 @@ void EditorArea::openFile(Connection *conn, const QString &path, int line, int c
 
 void EditorArea::openRemote(Connection *conn, const QString &path, const QString &content, int line, int column)
 {
-    if (const int i = indexOfRemote(conn, path); i >= 0) { // opened twice while loading
-        focusAt(i, line, column);
+    if (remoteDoc(conn, path)) { // opened twice while loading
+        openFile(conn, path, line, column);
         return;
     }
     const QString cache = cachePathFor(conn, path);
@@ -204,8 +292,7 @@ void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
     }
     view->setContextMenu(menu);
     const QMimeType mime = QMimeDatabase().mimeTypeForFile(doc->url().toLocalFile());
-    const int i = addTab(view, QIcon::fromTheme(mime.iconName(), QIcon::fromTheme(mime.genericIconName())), QString());
-    setTabToolTip(i, tooltip);
+    const int i = addTabForSession(view, QIcon::fromTheme(mime.iconName(), QIcon::fromTheme(mime.genericIconName())), tooltip);
     updateTitle(view);
     connect(doc, &KTextEditor::Document::modifiedChanged, this, [this, view] { updateTitle(view); });
     connect(doc, &KTextEditor::Document::documentSavedOrUploaded, this, [this] { if (onSaved) onSaved(); });
@@ -215,12 +302,7 @@ void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
 
 void EditorArea::showDiff(const QString &key, const QString &title, const QString &tooltip, const QString &diff)
 {
-    KTextEditor::Document *doc = nullptr;
-    for (int i = 0; i < count() && !doc; ++i)
-        if (viewAt(i)->document()->property(kDiffProp).toString() == key) {
-            doc = viewAt(i)->document();
-            setCurrentIndex(i);
-        }
+    KTextEditor::Document *doc = findDoc([&](KTextEditor::Document *d) { return d->property(kDiffProp).toString() == key; });
     const bool fresh = !doc;
     if (fresh) {
         doc = KTextEditor::Editor::instance()->createDocument(this);
@@ -232,14 +314,18 @@ void EditorArea::showDiff(const QString &key, const QString &title, const QStrin
     doc->setText(diff.isEmpty() ? QStringLiteral("No changes.\n") : diff);
     doc->setReadWrite(false);
     doc->setModified(false);
-    if (fresh) {
-        auto *view = doc->createView(this);
-        view->setConfigValue(QStringLiteral("dynamic-word-wrap"), false);
-        const int i = addTab(view, QIcon::fromTheme(QStringLiteral("vcs-diff")), QString());
-        setTabToolTip(i, tooltip);
-        updateTitle(view);
-        setCurrentIndex(i);
-    }
+    if (const int i = indexInSession(doc); i >= 0) setCurrentIndex(i);
+    else addDiffView(doc, tooltip);
+}
+
+KTextEditor::View *EditorArea::addDiffView(KTextEditor::Document *doc, const QString &tooltip)
+{
+    auto *view = doc->createView(this);
+    view->setConfigValue(QStringLiteral("dynamic-word-wrap"), false);
+    const int i = addTabForSession(view, QIcon::fromTheme(QStringLiteral("vcs-diff")), tooltip);
+    updateTitle(view);
+    setCurrentIndex(i);
+    return view;
 }
 
 void EditorArea::updateTitle(KTextEditor::View *view)
@@ -256,13 +342,13 @@ void EditorArea::updateTitle(KTextEditor::View *view)
 void EditorArea::reloadIfUnmodified(Connection *conn, const QString &path)
 {
     if (!conn || conn->isLocal()) {
-        const int i = indexOfLocal(QFileInfo(path).canonicalFilePath());
-        if (i >= 0 && !viewAt(i)->document()->isModified()) viewAt(i)->document()->documentReload();
+        KTextEditor::Document *d = localDoc(QFileInfo(path).canonicalFilePath());
+        if (d && !d->isModified()) d->documentReload();
         return;
     }
-    const int i = indexOfRemote(conn, path);
-    if (i < 0 || viewAt(i)->document()->isModified()) return;
-    QPointer<KTextEditor::Document> doc(viewAt(i)->document());
+    KTextEditor::Document *d = remoteDoc(conn, path);
+    if (!d || d->isModified()) return;
+    QPointer<KTextEditor::Document> doc(d);
     conn->request(QStringLiteral("read_file"), {{QStringLiteral("path"), path}},
                   [doc](bool ok, const QJsonValue &data, const QString &) {
                       if (!ok || !doc || doc->isModified()) return;
@@ -272,7 +358,7 @@ void EditorArea::reloadIfUnmodified(Connection *conn, const QString &path)
 
 void EditorArea::saveCurrent()
 {
-    if (auto *v = viewAt(currentIndex())) v->document()->documentSave();
+    if (auto *v = currentView()) v->document()->documentSave();
 }
 
 bool EditorArea::closeTab(int index)
@@ -280,6 +366,11 @@ bool EditorArea::closeTab(int index)
     auto *view = viewAt(index);
     if (!view) return false;
     KTextEditor::Document *doc = view->document();
+    if (doc->views().size() > 1) { // still open in another session
+        removeTab(index);
+        delete view;
+        return true;
+    }
     if (!doc->queryClose()) return false;
     removeTab(index);
     delete doc; // also deletes its views
@@ -288,11 +379,13 @@ bool EditorArea::closeTab(int index)
 
 bool EditorArea::queryCloseAll()
 {
+    QSet<KTextEditor::Document *> asked;
     for (int i = 0; i < count(); ++i) {
-        if (auto *v = viewAt(i); v && v->document()->isModified()) {
-            setCurrentIndex(i);
-            if (!v->document()->queryClose()) return false;
-        }
+        KTextEditor::Document *d = viewAt(i)->document();
+        if (!d->isModified() || asked.contains(d)) continue;
+        asked.insert(d);
+        if (isTabVisible(i)) setCurrentIndex(i);
+        if (!d->queryClose()) return false;
     }
     return true;
 }

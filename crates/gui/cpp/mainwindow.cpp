@@ -104,11 +104,11 @@ MainWindow::MainWindow()
     auto *editorPlaceholder = new QLabel(QStringLiteral("Open a file from the Files panel, or click a file link in the chat."));
     editorPlaceholder->setAlignment(Qt::AlignCenter);
     editorPlaceholder->setEnabled(false);
-    auto *editorStack = new QStackedWidget;
-    editorStack->addWidget(editorPlaceholder);
-    editorStack->addWidget(m_editors);
-    connect(m_editors, &QTabWidget::currentChanged, this, [this, editorStack] { editorStack->setCurrentIndex(m_editors->count() ? 1 : 0); });
-    setCentralWidget(editorStack);
+    m_editorStack = new QStackedWidget;
+    m_editorStack->addWidget(editorPlaceholder);
+    m_editorStack->addWidget(m_editors);
+    connect(m_editors, &QTabWidget::currentChanged, this, [this] { m_editorStack->setCurrentIndex(m_editors->hasVisibleTabs() ? 1 : 0); });
+    setCentralWidget(m_editorStack);
 
     // Files (left).
     m_files = new FileTree;
@@ -229,7 +229,7 @@ void MainWindow::setupMenus()
     file->addAction(QIcon::fromTheme(QStringLiteral("document-save")), QStringLiteral("Save (Ctrl+S in editor)"), this,
                     [this] { m_editors->saveCurrent(); });
     file->addAction(QIcon::fromTheme(QStringLiteral("tab-close")), QStringLiteral("Close File"), this,
-                    [this] { m_editors->closeTab(m_editors->currentIndex()); });
+                    [this] { if (m_editors->isTabVisible(m_editors->currentIndex())) m_editors->closeTab(m_editors->currentIndex()); });
     file->addSeparator();
     file->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), QStringLiteral("&Quit"), QKeySequence::Quit, this,
                     &QWidget::close);
@@ -398,6 +398,7 @@ void MainWindow::removeHost(Connection *conn)
         if (it.value()->connection() == conn) {
             m_sessionBar->removeEntry(it.key());
             m_terminals->removeSession(it.key());
+            m_editors->removeSession(it.key());
             delete it.value();
             it = m_chats.erase(it);
         } else {
@@ -519,6 +520,7 @@ void MainWindow::syncSessions(Connection *conn, const QJsonArray &sessions)
         if (it.value()->connection() == conn && !seen.contains(it.key())) {
             m_sessionBar->removeEntry(it.key());
             m_terminals->removeSession(it.key());
+            m_editors->removeSession(it.key());
             delete it.value();
             it = m_chats.erase(it);
         } else {
@@ -562,6 +564,8 @@ void MainWindow::currentSessionChanged()
     m_changes->setClaudeFiles(c ? c->touchedFiles() : QStringList());
     m_terminals->setSession(c ? chatKey(c->connection(), c->id()) : QString(), c ? c->connection() : nullptr,
                             c ? c->cwd() : QString());
+    m_editors->setSession(c ? chatKey(c->connection(), c->id()) : QString());
+    m_editorStack->setCurrentIndex(m_editors->hasVisibleTabs() ? 1 : 0);
     updateChatTitle();
     updateAuthLabel();
     updateConnectionLabel();
@@ -659,7 +663,7 @@ void MainWindow::closeSession(ChatView *c)
     const auto answer = QMessageBox::question(
         this, QStringLiteral("Close Session"),
         QStringLiteral("Close “%1”? Claude stops, but the conversation stays in Claude's history (claude --resume).").arg(c->name()));
-    if (answer == QMessageBox::Yes)
+    if (answer == QMessageBox::Yes && m_editors->closeSession(chatKey(c->connection(), c->id())))
         c->connection()->request(QStringLiteral("close_session"), {{QStringLiteral("session"), c->id()}});
 }
 
