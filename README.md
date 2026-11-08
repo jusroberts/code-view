@@ -22,7 +22,7 @@ The daemon keeps running after you close the GUI. After rebuilding, restart it w
 - Each session runs `claude -p --input-format stream-json --output-format stream-json --permission-prompt-tool stdio` in the session's folder. Permission prompts appear in the GUI as Allow/Deny buttons. Images you paste or drop are sent to Claude inline.
 - Sessions are saved in `~/.local/state/codeview/sessions.json` and resumed with `claude --resume`. The daemon log is `~/.local/state/codeview/daemon.log`.
 - The daemon only listens on `$XDG_RUNTIME_DIR/codeview/daemon.sock`, which only your user can access. No network port is opened.
-- **Claude → Log In…** runs `claude auth login` on the daemon's host and shows its output, so you can open the login link and paste the code back.
+- **Claude → Log In on Current Host…** runs `claude auth login` on that host and shows its output, so you can open the login link and paste the code back.
 
 ## Remote hosts
 
