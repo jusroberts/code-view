@@ -8,6 +8,7 @@
 
 #include <QFileInfo>
 #include <QLabel>
+#include <QTimer>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QToolButton>
@@ -74,7 +75,7 @@ void TerminalPanel::ensureTerminal()
     if (QTabWidget *tabs = m_tabs.value(m_key); tabs && tabs->count() == 0) newTerminal();
 }
 
-void TerminalPanel::newTerminal()
+void TerminalPanel::newTerminal(const QString &typed)
 {
     if (m_key.isEmpty() || !m_conn) return;
     QTabWidget *tabs = tabsFor(m_key);
@@ -103,6 +104,10 @@ void TerminalPanel::newTerminal()
             term->startProgram(ssh, {ssh, QStringLiteral("-t"), m_conn->sshTarget(),
                                      QStringLiteral("cd %1 && exec \"$SHELL\" -l").arg(shellQuote(m_cwd))});
         }
+        if (!typed.isEmpty()) // give the shell (or ssh) a moment to show its prompt
+            QTimer::singleShot(m_conn->isLocal() ? 1500 : 2500, part, [part, typed] {
+                if (auto *t = qobject_cast<TerminalInterface *>(part)) t->sendInput(typed);
+            });
     }
     w->setFocus();
 }

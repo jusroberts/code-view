@@ -242,6 +242,7 @@ impl Daemon {
                 s.send(&message);
                 Ok(Value::Null)
             }
+            Request::Which { names } => Ok(json!(lsp::which(&names).await)),
             Request::LspStop { server } => {
                 self.lsp.lock().unwrap().servers.remove(&server);
                 Ok(Value::Null)
@@ -458,7 +459,7 @@ impl Daemon {
     }
 
     async fn lsp_start(self: &Arc<Self>, client: u64, file: &str, candidates: &[Vec<String>]) -> Result<Value> {
-        let command = lsp::pick_command(candidates)?;
+        let command = lsp::pick_command(candidates).await?;
         let root = lsp::root_for(file).await.to_string_lossy().into_owned();
         let mut lsp = self.lsp.lock().unwrap();
         if let Some((id, _)) = lsp.servers.iter().find(|(_, s)| s.owner == client && s.root == root && s.command == command) {

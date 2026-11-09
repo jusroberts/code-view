@@ -47,6 +47,10 @@ public:
     // The current file's code intelligence state (see codeIntelStatus) may have changed.
     std::function<void()> onCodeIntelChanged;
     QString codeIntelStatus() const;
+    KTextEditor::Document *currentDocument() const; // of this session's current tab
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override; // Ctrl+click goes to the definition
 
 private:
     KTextEditor::View *viewAt(int index) const;

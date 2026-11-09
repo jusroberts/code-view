@@ -11,6 +11,7 @@
 #include "sessionbar.h"
 #include "terminalpanel.h"
 
+#include <KTextEditor/Document>
 #include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -35,6 +36,8 @@
 #include <QTextStream>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QCursor>
+#include <QMenu>
 #include <QProcess>
 #include <QPointer>
 #include <QLocale>
@@ -155,9 +158,16 @@ MainWindow::MainWindow()
     m_editors->lsp()->onStatus = [this](const QString &message) { statusBar()->showMessage(message, 8000); };
     m_codeIntelLabel = new QLabel;
     m_codeIntelLabel->setContentsMargins(0, 0, 16, 0);
+    m_codeIntelLabel->setTextFormat(Qt::RichText);
+    connect(m_codeIntelLabel, &QLabel::linkActivated, this, [this] { showCodeIntelFix(); });
     m_editors->onCodeIntelChanged = [this] {
         const QString s = m_editors->codeIntelStatus();
-        m_codeIntelLabel->setText(s.length() > 70 ? s.left(70) + QStringLiteral("…") : s);
+        MissingServer missing;
+        KTextEditor::Document *doc = m_editors->currentDocument();
+        if (doc && m_editors->lsp()->missingServer(doc, &missing))
+            m_codeIntelLabel->setText(QStringLiteral("No %1 language server — <a href=\"fix\">Install…</a>").arg(missing.language.toHtmlEscaped()));
+        else
+            m_codeIntelLabel->setText((s.length() > 70 ? s.left(70) + QStringLiteral("…") : s).toHtmlEscaped());
         m_codeIntelLabel->setToolTip(s);
     };
 
@@ -265,6 +275,39 @@ bool MainWindow::daemonOutdated(Connection *conn) const
     const QString commit = conn->daemonCommit();
     return !conn->isLocal() && conn->connected() && !m_latestCommit.isEmpty() && !commit.isEmpty() &&
            !m_latestCommit.startsWith(commit);
+}
+
+void MainWindow::showCodeIntelFix()
+{
+    KTextEditor::Document *doc = m_editors->currentDocument();
+    MissingServer m;
+    if (!doc || !m_editors->lsp()->missingServer(doc, &m)) return;
+    Connection *conn = Connection::find(m.connId);
+    ChatView *chat = currentChat();
+    const bool sameHost = chat && conn && chat->connection() == conn; // terminal and Claude run on the current session's host
+    QMenu menu;
+    if (!m.installCommand.isEmpty()) {
+        menu.addAction(QIcon::fromTheme(QStringLiteral("utilities-terminal")), QStringLiteral("Install in Terminal: %1").arg(m.installCommand), this,
+                       [this, cmd = m.installCommand] {
+                           m_terminals->newTerminal(cmd); // typed at the prompt; you press Enter
+                           m_stripes->setMinimized(m_terminalDock, false);
+                       })->setEnabled(sameHost);
+    } else {
+        menu.addAction(QStringLiteral("No install command known for this host"))->setEnabled(false);
+    }
+    menu.addAction(QIcon::fromTheme(QStringLiteral("help-hint")), QStringLiteral("Ask Claude to Install It"), this, [this, chat, m] {
+        chat->setDraft(QStringLiteral("Code View has no code intelligence for .%1 files on this machine because no %2 language server is installed. "
+                                      "It looks for one of these commands on the PATH of a login shell: %3. Please work out the best way to install "
+                                      "one on this system (check which package manager or toolchain is available), install it, and check that a login "
+                                      "shell finds it (`$SHELL -lc 'command -v NAME'`). Then tell me what you did.")
+                           .arg(m.extension, m.language, m.servers.join(QStringLiteral(", "))));
+        m_stripes->setMinimized(m_chatDock, false);
+    })->setEnabled(sameHost);
+    if (!sameHost) menu.addAction(QStringLiteral("(Switch to a session on that host to install from here)"))->setEnabled(false);
+    menu.addSeparator();
+    menu.addAction(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Look Again (after installing)"), this,
+                   [this, doc = QPointer<KTextEditor::Document>(doc)] { if (doc) m_editors->lsp()->retry(doc); });
+    menu.exec(QCursor::pos());
 }
 
 void MainWindow::installDaemon(Connection *conn)

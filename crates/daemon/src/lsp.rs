@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
@@ -31,19 +32,61 @@ impl LspServer {
     }
 }
 
+fn find_in(program: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join(program)).find(|p| p.is_file())
+}
+
 fn on_path(program: &str) -> bool {
     if program.contains('/') {
         return Path::new(program).is_file();
     }
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
-        .unwrap_or(false)
+    std::env::var_os("PATH").is_some_and(|paths| find_in(program, &paths).is_some())
 }
 
-pub fn pick_command(candidates: &[Vec<String>]) -> Result<Vec<String>> {
+/// PATH as a fresh login shell sets it up, so programs installed after the daemon
+/// started (e.g. into a folder newly added in ~/.profile) are found without a restart.
+async fn login_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let cmd = Command::new(shell).args(["-l", "-c", "env"]).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).output();
+    let out = tokio::time::timeout(Duration::from_secs(10), cmd).await.ok()?.ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix("PATH=").map(str::to_string))
+}
+
+/// Full path of `program`: from the daemon's PATH, else from a login shell's.
+async fn resolve(program: &str, login: &mut Option<Option<String>>) -> Option<String> {
+    if on_path(program) {
+        return Some(program.to_string());
+    }
+    if program.contains('/') {
+        return None;
+    }
+    if login.is_none() {
+        *login = Some(login_path().await);
+    }
+    let path = login.as_ref().unwrap().as_ref()?;
+    find_in(program, path.as_ref()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Which of `names` are installed on this host.
+pub async fn which(names: &[String]) -> Vec<String> {
+    let mut login = None;
+    let mut found = Vec::new();
+    for n in names {
+        if resolve(n, &mut login).await.is_some() {
+            found.push(n.clone());
+        }
+    }
+    found
+}
+
+pub async fn pick_command(candidates: &[Vec<String>]) -> Result<Vec<String>> {
+    let mut login = None;
     for c in candidates {
-        if c.first().is_some_and(|p| on_path(p)) {
-            return Ok(c.clone());
+        let Some(program) = c.first() else { continue };
+        if let Some(full) = resolve(program, &mut login).await {
+            let mut c = c.clone();
+            c[0] = full;
+            return Ok(c);
         }
     }
     let names: Vec<&str> = candidates.iter().filter_map(|c| c.first().map(String::as_str)).collect();

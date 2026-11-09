@@ -17,20 +17,39 @@
 
 namespace cv {
 
-namespace {
+struct Install {
+    QString tool;    // program that must exist on the host, e.g. "pamac" or "npm"
+    QString command; // what to run in a terminal there
+};
 
 struct Language {
     QString id;
     QList<QStringList> candidates; // argv lists, first found on the host wins
     QString hint;                  // how to install a server
+    QList<Install> install = {};   // ways to install one, best first
 };
+
+namespace {
+
+QList<Install> arch(const QString &pkg)
+{
+    return {{QStringLiteral("pamac"), QStringLiteral("pamac install ") + pkg}, {QStringLiteral("pacman"), QStringLiteral("sudo pacman -S ") + pkg}};
+}
+Install apt(const QString &pkg) { return {QStringLiteral("apt"), QStringLiteral("sudo apt install ") + pkg}; }
+Install dnf(const QString &pkg) { return {QStringLiteral("dnf"), QStringLiteral("sudo dnf install ") + pkg}; }
+Install npm(const QString &pkgs) { return {QStringLiteral("npm"), QStringLiteral("npm install -g ") + pkgs}; }
 
 // Language servers by file extension.
 const Language *languageFor(const QString &path)
 {
     static const QHash<QString, Language> byExt = [] {
         QHash<QString, Language> m;
-        const Language rust{QStringLiteral("rust"), {{QStringLiteral("rust-analyzer")}}, QStringLiteral("rustup component add rust-analyzer")};
+        const Language rust{QStringLiteral("rust"), {{QStringLiteral("rust-analyzer")}}, QStringLiteral("rustup component add rust-analyzer"),
+                            QList<Install>{{QStringLiteral("rustup"), QStringLiteral("rustup component add rust-analyzer")}} + arch(QStringLiteral("rust-analyzer"))};
+        const QList<Install> clangdInstall = arch(QStringLiteral("clang")) + QList<Install>{apt(QStringLiteral("clangd")), dnf(QStringLiteral("clang-tools-extra"))};
+        const QList<Install> pythonInstall = arch(QStringLiteral("pyright")) + QList<Install>{npm(QStringLiteral("pyright")),
+            {QStringLiteral("pipx"), QStringLiteral("pipx install python-lsp-server")}, apt(QStringLiteral("python3-pylsp")), dnf(QStringLiteral("python3-lsp-server"))};
+        const QList<Install> tsInstall = arch(QStringLiteral("typescript-language-server")) + QList<Install>{npm(QStringLiteral("typescript typescript-language-server"))};
         const QList<QStringList> clangd{{QStringLiteral("clangd")}};
         const QString clangdHint = QStringLiteral("install clangd (part of LLVM/clang)");
         const QList<QStringList> python{{QStringLiteral("pyright-langserver"), QStringLiteral("--stdio")},
@@ -40,24 +59,30 @@ const Language *languageFor(const QString &path)
         const QList<QStringList> ts{{QStringLiteral("typescript-language-server"), QStringLiteral("--stdio")}};
         const QString tsHint = QStringLiteral("npm install -g typescript typescript-language-server");
         m.insert(QStringLiteral("rs"), rust);
-        for (const char *e : {"c", "h"}) m.insert(QLatin1String(e), {QStringLiteral("c"), clangd, clangdHint});
-        for (const char *e : {"cpp", "cc", "cxx", "hpp", "hh", "hxx"}) m.insert(QLatin1String(e), {QStringLiteral("cpp"), clangd, clangdHint});
-        m.insert(QStringLiteral("py"), {QStringLiteral("python"), python, pythonHint});
-        m.insert(QStringLiteral("ts"), {QStringLiteral("typescript"), ts, tsHint});
-        m.insert(QStringLiteral("tsx"), {QStringLiteral("typescriptreact"), ts, tsHint});
-        for (const char *e : {"js", "mjs", "cjs"}) m.insert(QLatin1String(e), {QStringLiteral("javascript"), ts, tsHint});
-        m.insert(QStringLiteral("jsx"), {QStringLiteral("javascriptreact"), ts, tsHint});
+        for (const char *e : {"c", "h"}) m.insert(QLatin1String(e), {QStringLiteral("c"), clangd, clangdHint, clangdInstall});
+        for (const char *e : {"cpp", "cc", "cxx", "hpp", "hh", "hxx"}) m.insert(QLatin1String(e), {QStringLiteral("cpp"), clangd, clangdHint, clangdInstall});
+        m.insert(QStringLiteral("py"), {QStringLiteral("python"), python, pythonHint, pythonInstall});
+        m.insert(QStringLiteral("ts"), {QStringLiteral("typescript"), ts, tsHint, tsInstall});
+        m.insert(QStringLiteral("tsx"), {QStringLiteral("typescriptreact"), ts, tsHint, tsInstall});
+        for (const char *e : {"js", "mjs", "cjs"}) m.insert(QLatin1String(e), {QStringLiteral("javascript"), ts, tsHint, tsInstall});
+        m.insert(QStringLiteral("jsx"), {QStringLiteral("javascriptreact"), ts, tsHint, tsInstall});
         m.insert(QStringLiteral("dart"), {QStringLiteral("dart"),
                                           {{QStringLiteral("dart"), QStringLiteral("language-server"), QStringLiteral("--protocol=lsp"),
                                             QStringLiteral("--client-id=codeview")}},
-                                          QStringLiteral("install the Dart or Flutter SDK so `dart` is on the PATH of a login shell")});
-        m.insert(QStringLiteral("go"), {QStringLiteral("go"), {{QStringLiteral("gopls")}}, QStringLiteral("go install golang.org/x/tools/gopls@latest")});
-        m.insert(QStringLiteral("kt"), {QStringLiteral("kotlin"), {{QStringLiteral("kotlin-language-server")}}, QStringLiteral("install kotlin-language-server")});
-        m.insert(QStringLiteral("lua"), {QStringLiteral("lua"), {{QStringLiteral("lua-language-server")}}, QStringLiteral("install lua-language-server")});
-        m.insert(QStringLiteral("zig"), {QStringLiteral("zig"), {{QStringLiteral("zls")}}, QStringLiteral("install zls")});
+                                          QStringLiteral("install the Dart or Flutter SDK so `dart` is on the PATH of a login shell"),
+                                          arch(QStringLiteral("dart"))});
+        m.insert(QStringLiteral("go"), {QStringLiteral("go"), {{QStringLiteral("gopls")}}, QStringLiteral("go install golang.org/x/tools/gopls@latest"),
+                                        arch(QStringLiteral("gopls")) + QList<Install>{{QStringLiteral("go"), QStringLiteral("go install golang.org/x/tools/gopls@latest")},
+                                                                                      apt(QStringLiteral("gopls"))}});
+        m.insert(QStringLiteral("kt"), {QStringLiteral("kotlin"), {{QStringLiteral("kotlin-language-server")}}, QStringLiteral("install kotlin-language-server"),
+                                        {{QStringLiteral("pamac"), QStringLiteral("pamac build kotlin-language-server")}}});
+        m.insert(QStringLiteral("lua"), {QStringLiteral("lua"), {{QStringLiteral("lua-language-server")}}, QStringLiteral("install lua-language-server"),
+                                         arch(QStringLiteral("lua-language-server"))});
+        m.insert(QStringLiteral("zig"), {QStringLiteral("zig"), {{QStringLiteral("zls")}}, QStringLiteral("install zls"), arch(QStringLiteral("zls"))});
         for (const char *e : {"sh", "bash"})
             m.insert(QLatin1String(e), {QStringLiteral("shellscript"), {{QStringLiteral("bash-language-server"), QStringLiteral("start")}},
-                                        QStringLiteral("npm install -g bash-language-server")});
+                                        QStringLiteral("npm install -g bash-language-server"),
+                                        arch(QStringLiteral("bash-language-server")) + QList<Install>{npm(QStringLiteral("bash-language-server"))}});
         return m;
     }();
     const auto it = byExt.find(QFileInfo(path).suffix().toLower());
@@ -256,9 +281,58 @@ void LspManager::status(const QString &message)
     if (onStatus) onStatus(message);
 }
 
+void LspManager::findInstallCommand(Doc *d, const Language *lang)
+{
+    Connection *conn = Connection::find(d->connId);
+    if (!conn || lang->install.isEmpty()) return;
+    QJsonArray tools;
+    for (const Install &i : lang->install) tools.append(i.tool);
+    QPointer<KTextEditor::Document> guard(d->doc);
+    conn->request(QStringLiteral("which"), {{QStringLiteral("names"), tools}}, [this, guard, lang](bool ok, const QJsonValue &data, const QString &) {
+        Doc *d = guard ? docFor(guard) : nullptr;
+        if (!d || !ok || d->server) return; // an older daemon doesn't know "which"
+        const QJsonArray found = data.toArray();
+        for (const Install &i : lang->install)
+            if (found.contains(i.tool)) {
+                d->installCommand = i.command;
+                stateChanged();
+                return;
+            }
+    });
+}
+
+bool LspManager::missingServer(KTextEditor::Document *doc, MissingServer *out)
+{
+    Doc *d = docFor(doc);
+    if (!d || d->server || d->problem.isEmpty()) return false;
+    const Language *lang = languageFor(d->path);
+    out->language = lang->id;
+    out->servers.clear();
+    for (const QStringList &c : lang->candidates) out->servers << c.join(QLatin1Char(' '));
+    out->installCommand = d->installCommand;
+    out->connId = d->connId;
+    out->extension = QFileInfo(d->path).suffix();
+    return true;
+}
+
+void LspManager::retry(KTextEditor::Document *doc)
+{
+    Doc *d = docFor(doc);
+    if (!d || d->server) return;
+    m_reported.remove(d->connId + QLatin1Char('/') + d->languageId);
+    d->problem.clear();
+    stateChanged();
+    start(d);
+}
+
 void LspManager::stateChanged()
 {
     if (onStateChanged) onStateChanged();
+}
+
+bool LspManager::hoverShowingAt(QWidget *w, const QPoint &pos) const
+{
+    return QToolTip::isVisible() && m_hoverWidget == w && !m_hoverArea.isNull() && m_hoverArea.contains(pos);
 }
 
 bool LspManager::hasServer(KTextEditor::Document *doc)
@@ -339,7 +413,9 @@ void LspManager::start(Doc *d)
                       if (!d) return;
                       if (!ok) {
                           d->problem = QStringLiteral("No %1 language server on this host — %2").arg(lang->id, lang->hint);
+                          d->installCommand.clear();
                           stateChanged();
+                          findInstallCommand(d, lang);
                           // Say it once per host and language, not for every file.
                           if (const QString key = connId + QLatin1Char('/') + lang->id; !m_reported.contains(key)) {
                               m_reported.insert(key);
@@ -494,16 +570,34 @@ QString LspManager::textHint(KTextEditor::View *view, const KTextEditor::Cursor 
     }
     if (!messages.isEmpty()) return messages.join(QStringLiteral("\n\n"));
     if (!d->server) return {};
+    // Still on the symbol whose info is showing: leave the tooltip alone.
+    if (QToolTip::isVisible() && m_hoverView == view && m_hoverRange.contains(pos)) return {};
 
     // Hover info arrives later; show it as a tooltip if the mouse hasn't moved on.
     const quint64 gen = ++m_hoverGen;
     QPointer<KTextEditor::View> v(view);
     const QPoint mouse = QCursor::pos();
+    const KTextEditor::Range word = view->document()->wordRangeAt(pos);
     d->server->request(QStringLiteral("textDocument/hover"), position(d, pos),
-                       [this, gen, v, mouse](const QJsonValue &result, const QJsonObject &) {
+                       [this, gen, v, mouse, word](const QJsonValue &result, const QJsonObject &) {
                            if (!v || gen != m_hoverGen || (QCursor::pos() - mouse).manhattanLength() > 8) return;
                            const QString html = hoverHtml(result[QStringLiteral("contents")]);
-                           if (!html.isEmpty()) QToolTip::showText(mouse, html, v);
+                           if (html.isEmpty()) return;
+                           // The symbol's area on screen: the tooltip stays up while the mouse is inside it.
+                           KTextEditor::Range r = result[QStringLiteral("range")].isObject() ? rangeFrom(result[QStringLiteral("range")]) : word;
+                           if (!r.isValid() || r.onSingleLine() == false) r = word;
+                           const QPoint a = v->cursorToCoordinate(r.start());
+                           const QPoint b = v->cursorToCoordinate(r.end());
+                           const int lineHeight = v->fontMetrics().height() + 4;
+                           // Mouse moves go to the view's text area, so the tooltip must belong to it for the area check to work.
+                           QWidget *w = v->focusProxy() ? v->focusProxy() : v.data();
+                           QRect area = (a.x() < 0 || b.x() < 0) ? QRect()
+                                                                 : QRect(w->mapFrom(v, a), w->mapFrom(v, QPoint(b.x(), a.y() + lineHeight))).adjusted(-2, -2, 2, 2);
+                           m_hoverView = v;
+                           m_hoverRange = r;
+                           m_hoverWidget = w;
+                           m_hoverArea = area;
+                           QToolTip::showText(mouse, html, w, area);
                        });
     return {};
 }

@@ -36,6 +36,8 @@ protected:
 class ChatView : public QWidget
 {
 public:
+    // Puts text in the message box for the user to review and send.
+    void setDraft(const QString &text);
     ChatView(Connection *conn, const QJsonObject &info, QWidget *parent = nullptr);
 
     Connection *connection() const { return m_conn; }

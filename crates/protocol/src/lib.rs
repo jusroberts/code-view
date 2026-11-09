@@ -69,9 +69,11 @@ pub enum Request {
     GitDiff { cwd: String, path: String, base: Option<String> },
     /// Discards uncommitted changes to `path` (restores it from HEAD; deletes it if untracked).
     GitRevert { cwd: String, path: String },
-    /// Starts a language server for `file`: the first of `candidates` (argv lists) found on PATH,
-    /// rooted at the file's git repository (or its folder). Reuses this client's server for the
-    /// same root and command. Returns `{server, root, command, existing}`.
+    /// Returns the subset of `names` that are programs on this host's PATH (or a login shell's).
+    Which { names: Vec<String> },
+    /// Starts a language server for `file`: the first of `candidates` (argv lists) found on PATH
+    /// (or a login shell's PATH), rooted at the file's git repository (or its folder). Reuses this
+    /// client's server for the same root and command. Returns `{server, root, command, existing}`.
     LspStart { file: String, candidates: Vec<Vec<String>> },
     /// Sends one JSON-RPC message to a language server; replies arrive as `Event::LspMessage`.
     LspSend { server: u64, message: serde_json::Value },
@@ -87,6 +89,8 @@ impl Request {
                 | Request::GitStatus { .. }
                 | Request::GitDiff { .. }
                 | Request::ListConversations { .. }
+                | Request::Which { .. }
+                | Request::LspStart { .. }
                 | Request::CreateSession { resume: Some(_), .. }
         )
     }

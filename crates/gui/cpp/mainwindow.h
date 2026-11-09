@@ -61,6 +61,7 @@ private:
     // Lists Claude's saved conversations for a folder and opens the chosen one as a session.
     void resumeConversation(Connection *conn, const QString &cwd);
     void installDaemon(Connection *conn);
+    void showCodeIntelFix(); // menu for installing a missing language server
     bool daemonOutdated(Connection *conn) const;
     void requestCreateSession(Connection *conn, const QJsonObject &args, const QString &title);
 

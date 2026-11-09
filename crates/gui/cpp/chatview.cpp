@@ -546,6 +546,13 @@ void ChatView::rebuildAttachments()
     m_attachBar->setVisible(!m_attachments.isEmpty());
 }
 
+void ChatView::setDraft(const QString &text)
+{
+    m_input->setPlainText(text);
+    m_input->setFocus();
+    m_input->moveCursor(QTextCursor::End);
+}
+
 void ChatView::send()
 {
     const QString text = m_input->toPlainText().trimmed();

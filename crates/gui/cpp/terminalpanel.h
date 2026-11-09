@@ -19,7 +19,8 @@ public:
     // Switches to the given session's terminals. An empty key shows nothing.
     void setSession(const QString &key, Connection *conn, const QString &cwd);
     void removeSession(const QString &key);
-    void newTerminal();
+    // `typed` is entered at the prompt without pressing Enter, so the user can review it.
+    void newTerminal(const QString &typed = QString());
     // Opens a first terminal if the current session has none.
     void ensureTerminal();
 

@@ -15,10 +15,15 @@ struct Daemon {
 impl Daemon {
     fn start(dir: &Path) -> Daemon {
         let socket = dir.join("sock/daemon.sock");
+        // A login shell whose PATH includes dir/late, which the daemon's own PATH doesn't.
+        let shell = dir.join("fake-shell");
+        std::fs::write(&shell, format!("#!/bin/sh\necho \"PATH={}/late:$PATH\"\n", dir.display())).unwrap();
+        std::fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_codeviewd"))
             .env("CODEVIEW_SOCKET", &socket)
             .env("CODEVIEW_STATE_DIR", dir.join("state"))
             .env("CLAUDE_CONFIG_DIR", dir.join("claude"))
+            .env("SHELL", &shell)
             .env("CODEVIEW_CLAUDE_BIN", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_claude.py"))
             .spawn()
             .unwrap();
@@ -342,4 +347,19 @@ fn list_and_resume_saved_conversation() {
     c.call(json!({"op": "send_message", "session": sid, "text": "more"})).unwrap();
     assert_eq!(c.wait_event(|e| e["type"] == "info" && e["message"].as_str().unwrap().starts_with("Model"))["message"], "Model: fake-resumed");
     c.wait_event(|e| e["type"] == "turn_complete");
+}
+
+#[test]
+fn finds_programs_installed_after_start() {
+    let dir = tempdir("late");
+    let d = Daemon::start(&dir);
+    // Installed after the daemon started, into a folder only a login shell's PATH has.
+    std::fs::create_dir_all(dir.join("late")).unwrap();
+    std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_lsp.py"), dir.join("late/late-ls")).unwrap();
+    let mut c = Client::connect(&d);
+    let found = c.call(json!({"op": "which", "names": ["sh", "late-ls", "no-such-tool"]})).unwrap();
+    assert_eq!(found, json!(["sh", "late-ls"]));
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    let started = c.call(json!({"op": "lsp_start", "file": dir.join("a.txt"), "candidates": [["late-ls"]]})).unwrap();
+    assert_eq!(started["command"][0], dir.join("late/late-ls").to_string_lossy().as_ref());
 }

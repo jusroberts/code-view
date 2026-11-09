@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
+#include <QRect>
 #include <functional>
 #include <map>
 
@@ -19,6 +20,15 @@ namespace cv {
 
 class Connection;
 class LspManager;
+struct Language;
+
+struct MissingServer {
+    QString language;       // e.g. "dart"
+    QStringList servers;    // commands Code View looks for
+    QString installCommand; // a command that installs one on that host, if known
+    QString connId;
+    QString extension;
+};
 
 // One language server running in a daemon (local or remote). Speaks JSON-RPC through
 // lsp_send requests; replies come back as lsp_message events.
@@ -67,8 +77,13 @@ public:
     void attachView(KTextEditor::View *view);
     void gotoDefinition(KTextEditor::View *view);
     bool hasServer(KTextEditor::Document *doc); // a language server is ready for this document
+    // True while hover info is showing for the symbol under `pos` in `w` (a view's text area).
+    bool hoverShowingAt(QWidget *w, const QPoint &pos) const;
     // One line for the status bar: which server serves the document, or why none does.
     QString describe(KTextEditor::Document *doc);
+    // True if the document's language has no server on its host.
+    bool missingServer(KTextEditor::Document *doc, MissingServer *out);
+    void retry(KTextEditor::Document *doc); // look for a server again (after installing one)
 
     // From the daemon.
     void handleMessage(Connection *conn, quint64 server, const QJsonObject &msg);
@@ -103,6 +118,7 @@ private:
         QString languageId;
         LspServer *server = nullptr;
         QString problem; // why there's no server
+        QString installCommand;
         int version = 0;
         bool dirty = false;
         QTimer *debounce = nullptr;
@@ -125,6 +141,7 @@ private:
     QJsonObject position(Doc *d, const KTextEditor::Cursor &c);
     void status(const QString &message);
     void stateChanged();
+    void findInstallCommand(Doc *d, const Language *lang);
 
     QHash<KTextEditor::Document *, Doc *> m_docs;
     QHash<QString, LspServer *> m_servers; // connId + '/' + server id
@@ -132,6 +149,10 @@ private:
     QList<Item> m_items;
     quint64 m_completionGen = 0;
     quint64 m_hoverGen = 0;
+    QPointer<KTextEditor::View> m_hoverView; // where the hover tooltip is showing
+    KTextEditor::Range m_hoverRange = KTextEditor::Range::invalid();
+    QPointer<QWidget> m_hoverWidget; // the view's text area
+    QRect m_hoverArea;               // the symbol, in m_hoverWidget coordinates
 };
 
 } // namespace cv

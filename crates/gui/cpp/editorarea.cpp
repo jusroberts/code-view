@@ -18,6 +18,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QSet>
+#include <QMouseEvent>
 #include <QTimer>
 #include <QStandardPaths>
 
@@ -68,6 +69,35 @@ EditorArea::EditorArea(QWidget *parent)
     addAction(gotoDef);
     m_lsp->onStateChanged = [this] { updateCodeIntel(); };
     connect(this, &QTabWidget::currentChanged, this, [this] { updateCodeIntel(); });
+}
+
+KTextEditor::Document *EditorArea::currentDocument() const
+{
+    KTextEditor::View *v = currentView();
+    return v ? v->document() : nullptr;
+}
+
+bool EditorArea::eventFilter(QObject *watched, QEvent *event)
+{
+    // KTextEditor hides tooltips on every mouse move; keep hover info up while the mouse stays on its symbol.
+    if (event->type() == QEvent::MouseMove) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->buttons() == Qt::NoButton && m_lsp->hoverShowingAt(qobject_cast<QWidget *>(watched), me->position().toPoint())) return true;
+    }
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        auto *w = qobject_cast<QWidget *>(watched);
+        auto *view = w ? qobject_cast<KTextEditor::View *>(w->parentWidget()) : nullptr;
+        if (view && me->button() == Qt::LeftButton && me->modifiers() == Qt::ControlModifier && m_lsp->hasServer(view->document())) {
+            const KTextEditor::Cursor c = view->coordinatesToCursor(w->mapTo(view, me->position().toPoint()));
+            if (c.isValid()) {
+                view->setCursorPosition(c);
+                m_lsp->gotoDefinition(view);
+                return true;
+            }
+        }
+    }
+    return QTabWidget::eventFilter(watched, event);
 }
 
 QString EditorArea::codeIntelStatus() const
@@ -298,6 +328,7 @@ void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
 {
     auto *view = doc->createView(this);
     m_lsp->attachView(view);
+    if (view->focusProxy()) view->focusProxy()->installEventFilter(this); // the text area gets the mouse events
     // Without a KXMLGUI host the view has no context menu; give it a small one.
     auto *menu = new QMenu(view);
     QAction *def = menu->addAction(QIcon::fromTheme(QStringLiteral("go-jump-definition")), QStringLiteral("Go to Definition (F12)"), this,
