@@ -25,7 +25,7 @@ QString initials(const QString &name)
     return (words[0].left(1) + words[1].left(1)).toUpper();
 }
 
-QIcon badge(const QString &name, const QString &status)
+QIcon badge(const QString &name, const QString &status, bool remote)
 {
     const qreal dpr = 2.0;
     QPixmap pm(QSize(kBadge, kBadge) * dpr);
@@ -50,6 +50,18 @@ QIcon badge(const QString &name, const QString &status)
         p.setBrush(dot);
         p.setPen(QPen(Qt::white, 1.5));
         p.drawEllipse(QRectF(kBadge - 11, kBadge - 11, 10, 10));
+    }
+    if (remote) { // red "R" in the top-right corner
+        const QRectF r(kBadge - 13, 0, 13, 13);
+        p.setBrush(QColor(0xda, 0x44, 0x53));
+        p.setPen(QPen(Qt::white, 1.5));
+        p.drawEllipse(r);
+        QFont rf;
+        rf.setBold(true);
+        rf.setPixelSize(9);
+        p.setFont(rf);
+        p.setPen(Qt::white);
+        p.drawText(r, Qt::AlignCenter, QStringLiteral("R"));
     }
     return QIcon(pm);
 }
@@ -144,7 +156,7 @@ void SessionBar::refreshItem(QListWidgetItem *item)
     const QString name = item->data(NameRole).toString();
     const QString host = item->data(HostRole).toString();
     const QString status = item->data(StatusRole).toString();
-    item->setIcon(badge(name, status));
+    item->setIcon(badge(name, status, !host.isEmpty()));
     item->setText(m_collapsed ? QString() : host.isEmpty() ? name : QStringLiteral("%1\n@%2").arg(name, host));
     QString tip = host.isEmpty() ? name : QStringLiteral("%1 @%2").arg(name, host);
     if (status == QLatin1String("busy")) tip += QStringLiteral(" (working)");
