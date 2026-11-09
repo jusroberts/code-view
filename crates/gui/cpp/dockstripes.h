@@ -1,6 +1,7 @@
 #pragma once
 #include <QHash>
 #include <QObject>
+#include <QVariantMap>
 
 class QAction;
 class QDockWidget;
@@ -21,11 +22,17 @@ public:
     void setMinimized(QDockWidget *dock, bool minimized);
     bool isMinimized(QDockWidget *dock) const { return m_buttons.contains(dock); }
 
+    // Which panels are minimized and their sizes, for saving with the window layout.
+    QVariantMap saveState() const;
+    // Call after QMainWindow::restoreState().
+    void restoreState(const QVariantMap &state);
+
 private:
     QMainWindow *m_window;
     QToolBar *m_left;
     QToolBar *m_right;
     QAction *m_leftSpacer; // panels from the bottom area go below it
+    QList<QDockWidget *> m_docks;
     QHash<QDockWidget *, QAction *> m_buttons;
     QHash<QDockWidget *, int> m_sizes; // width (or height for bottom panels) when minimized
 };

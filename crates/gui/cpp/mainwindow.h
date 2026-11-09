@@ -82,6 +82,7 @@ private:
     QMenu *m_hostsMenu;
     QLabel *m_connLabel;
     QLabel *m_authLabel;
+    QLabel *m_codeIntelLabel; // the current file's language server state
     QToolButton *m_loginButton;
     QPointer<LoginDialog> m_login;
 

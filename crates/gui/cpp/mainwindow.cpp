@@ -89,6 +89,10 @@ QString pickFolder(QWidget *parent, Connection *conn, const QString &start)
     // Show the whole tree from / with the starting folder selected, so you can still go up.
     tree->reveal(start.isEmpty() ? conn->home() : start);
     tree->setRoot(conn, QStringLiteral("/"));
+    tree->onActivateDir = [&dlg, path](const QString &p) { // double-click chooses the folder
+        path->setText(p);
+        dlg.accept();
+    };
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -99,6 +103,9 @@ QString pickFolder(QWidget *parent, Connection *conn, const QString &start)
     dlg.resize(520, 560);
     return dlg.exec() == QDialog::Accepted ? path->text().trimmed() : QString();
 }
+
+// Bump when the set of panels changes, so an old saved layout isn't applied.
+constexpr int kLayoutVersion = 1;
 
 } // namespace
 
@@ -146,6 +153,13 @@ MainWindow::MainWindow()
     changesDock->setWidget(m_changes);
     m_editors->onSaved = [this] { m_changes->scheduleRefresh(); };
     m_editors->lsp()->onStatus = [this](const QString &message) { statusBar()->showMessage(message, 8000); };
+    m_codeIntelLabel = new QLabel;
+    m_codeIntelLabel->setContentsMargins(0, 0, 16, 0);
+    m_editors->onCodeIntelChanged = [this] {
+        const QString s = m_editors->codeIntelStatus();
+        m_codeIntelLabel->setText(s.length() > 70 ? s.left(70) + QStringLiteral("…") : s);
+        m_codeIntelLabel->setToolTip(s);
+    };
 
     // Session list (far left); the selected session drives the rest of the window.
     m_sessionBar = new SessionBar;
@@ -218,6 +232,7 @@ MainWindow::MainWindow()
     m_loginButton->hide();
     connect(m_loginButton, &QToolButton::clicked, this, [this] { openLogin(currentConnection()); });
     statusBar()->addWidget(m_connLabel, 1);
+    statusBar()->addPermanentWidget(m_codeIntelLabel);
     statusBar()->addPermanentWidget(m_authLabel);
     statusBar()->addPermanentWidget(m_loginButton);
 
@@ -226,6 +241,12 @@ MainWindow::MainWindow()
     addConnection(QString::fromLatin1(Connection::kLocalId), QStringLiteral("local"), QString());
     loadHosts();
     updateConnectionLabel();
+
+    // Window layout from the last run.
+    QSettings settings;
+    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
+    if (restoreState(settings.value(QStringLiteral("window/state")).toByteArray(), kLayoutVersion))
+        m_stripes->restoreState(settings.value(QStringLiteral("window/panels")).toMap());
 
     // Learn the latest daemon commit so the Hosts menu can offer updates.
     auto *lsRemote = new QProcess(this);
@@ -901,8 +922,15 @@ void MainWindow::changeEvent(QEvent *e)
 void MainWindow::closeEvent(QCloseEvent *e)
 {
     // Sessions keep running in the daemons; only unsaved editor changes need asking about.
-    if (m_editors->queryCloseAll()) e->accept();
-    else e->ignore();
+    if (!m_editors->queryCloseAll()) {
+        e->ignore();
+        return;
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("window/state"), saveState(kLayoutVersion));
+    settings.setValue(QStringLiteral("window/panels"), m_stripes->saveState());
+    e->accept();
 }
 
 } // namespace cv

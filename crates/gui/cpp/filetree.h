@@ -28,6 +28,7 @@ public:
 
     std::function<void(const QString &path)> onOpenFile; // a file was activated
     std::function<void(const QString &path)> onSelect;   // the current item changed
+    std::function<void(const QString &path)> onActivateDir; // a folder was double-clicked; unset means expand/collapse it
 
 private:
     void load(QTreeWidgetItem *parent, const QString &path);

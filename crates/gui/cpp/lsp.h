@@ -34,6 +34,7 @@ public:
     void notify(const QString &method, const QJsonObject &params);
     void handle(const QJsonObject &msg);
     bool ready() const { return m_ready; }
+    bool failed() const { return m_failed; }
     QString name() const { return m_name; }
     QString connId() const { return m_connId; }
     quint64 id() const { return m_id; }
@@ -47,6 +48,7 @@ private:
     QString m_root;
     QString m_name;
     bool m_ready = false;
+    bool m_failed = false;
     QList<QJsonObject> m_queued; // sent once initialized
     qint64 m_nextId = 1;
     std::map<qint64, Callback> m_pending;
@@ -64,6 +66,9 @@ public:
     void attachDocument(KTextEditor::Document *doc, Connection *conn, const QString &path);
     void attachView(KTextEditor::View *view);
     void gotoDefinition(KTextEditor::View *view);
+    bool hasServer(KTextEditor::Document *doc); // a language server is ready for this document
+    // One line for the status bar: which server serves the document, or why none does.
+    QString describe(KTextEditor::Document *doc);
 
     // From the daemon.
     void handleMessage(Connection *conn, quint64 server, const QJsonObject &msg);
@@ -73,6 +78,7 @@ public:
 
     std::function<void(Connection *conn, const QString &path, int line, int column)> onOpenLocation;
     std::function<void(const QString &message)> onStatus;
+    std::function<void()> onStateChanged; // describe()/hasServer() may have changed
 
     // CodeCompletionModel
     QVariant data(const QModelIndex &index, int role) const override;
@@ -96,6 +102,7 @@ private:
         QString uri;
         QString languageId;
         LspServer *server = nullptr;
+        QString problem; // why there's no server
         int version = 0;
         bool dirty = false;
         QTimer *debounce = nullptr;
@@ -117,6 +124,7 @@ private:
     void publishDiagnostics(const QString &uri, const QJsonArray &diagnostics);
     QJsonObject position(Doc *d, const KTextEditor::Cursor &c);
     void status(const QString &message);
+    void stateChanged();
 
     QHash<KTextEditor::Document *, Doc *> m_docs;
     QHash<QString, LspServer *> m_servers; // connId + '/' + server id

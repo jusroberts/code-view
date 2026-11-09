@@ -79,6 +79,7 @@ DockStripes::DockStripes(QMainWindow *window)
 
 void DockStripes::manage(QDockWidget *dock)
 {
+    m_docks.append(dock);
     dock->setFeatures(QDockWidget::DockWidgetMovable); // no floating, no close
     auto *bar = new QWidget;
     auto *layout = new QHBoxLayout(bar);
@@ -93,6 +94,35 @@ void DockStripes::manage(QDockWidget *dock)
     layout->addWidget(title, 1);
     layout->addWidget(minimize);
     dock->setTitleBarWidget(bar);
+}
+
+QVariantMap DockStripes::saveState() const
+{
+    QStringList minimized;
+    QVariantMap sizes;
+    for (QDockWidget *d : m_docks) {
+        if (!isMinimized(d)) continue;
+        minimized << d->objectName();
+        if (m_sizes.contains(d)) sizes.insert(d->objectName(), m_sizes.value(d));
+    }
+    return {{QStringLiteral("minimized"), minimized}, {QStringLiteral("sizes"), sizes}};
+}
+
+void DockStripes::restoreState(const QVariantMap &state)
+{
+    const QStringList minimized = state.value(QStringLiteral("minimized")).toStringList();
+    const QVariantMap sizes = state.value(QStringLiteral("sizes")).toMap();
+    for (QDockWidget *d : std::as_const(m_docks)) {
+        const bool want = minimized.contains(d->objectName());
+        if (want == isMinimized(d)) continue;
+        setMinimized(d, want);
+        if (want && sizes.contains(d->objectName())) m_sizes.insert(d, sizes.value(d->objectName()).toInt());
+    }
+    // A panel the saved layout hid without minimizing would otherwise be unreachable.
+    for (QDockWidget *d : std::as_const(m_docks))
+        if (!isMinimized(d) && d->isHidden()) d->show();
+    m_left->setVisible(m_left->actions().size() > 1);
+    m_right->setVisible(!m_right->actions().isEmpty());
 }
 
 void DockStripes::setMinimized(QDockWidget *dock, bool minimized)

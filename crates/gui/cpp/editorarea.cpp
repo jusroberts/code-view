@@ -18,6 +18,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QSet>
+#include <QTimer>
 #include <QStandardPaths>
 
 namespace cv {
@@ -60,11 +61,26 @@ EditorArea::EditorArea(QWidget *parent)
     m_lsp = new LspManager; // deleted after the documents (views hold pointers to it)
     m_lsp->onOpenLocation = [this](Connection *conn, const QString &path, int line, int column) { openFile(conn, path, line, column); };
 
-    auto *gotoDef = new QAction(QStringLiteral("Go to Definition"), this);
+    auto *gotoDef = m_gotoDef = new QAction(QStringLiteral("Go to Definition"), this);
     gotoDef->setShortcut(Qt::Key_F12);
     gotoDef->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     connect(gotoDef, &QAction::triggered, this, [this] { gotoDefinition(); });
     addAction(gotoDef);
+    m_lsp->onStateChanged = [this] { updateCodeIntel(); };
+    connect(this, &QTabWidget::currentChanged, this, [this] { updateCodeIntel(); });
+}
+
+QString EditorArea::codeIntelStatus() const
+{
+    KTextEditor::View *v = currentView();
+    return v ? m_lsp->describe(v->document()) : QString();
+}
+
+void EditorArea::updateCodeIntel()
+{
+    KTextEditor::View *v = currentView();
+    m_gotoDef->setEnabled(v && m_lsp->hasServer(v->document()));
+    if (onCodeIntelChanged) onCodeIntelChanged();
 }
 
 EditorArea::~EditorArea()
@@ -138,6 +154,7 @@ void EditorArea::setSession(const QString &key)
     if (key == m_session) return;
     m_lastCurrent.insert(m_session, currentView());
     m_session = key;
+    QTimer::singleShot(0, this, [this] { updateCodeIntel(); });
     for (int i = 0; i < count(); ++i) {
         const QString s = widget(i)->property(kSessionProp).toString();
         setTabVisible(i, s.isEmpty() || s == key);
@@ -283,8 +300,9 @@ void EditorArea::addView(KTextEditor::Document *doc, const QString &tooltip)
     m_lsp->attachView(view);
     // Without a KXMLGUI host the view has no context menu; give it a small one.
     auto *menu = new QMenu(view);
-    menu->addAction(QIcon::fromTheme(QStringLiteral("go-jump-definition")), QStringLiteral("Go to Definition (F12)"), this,
-                    [this, view] { m_lsp->gotoDefinition(view); });
+    QAction *def = menu->addAction(QIcon::fromTheme(QStringLiteral("go-jump-definition")), QStringLiteral("Go to Definition (F12)"), this,
+                                   [this, view] { m_lsp->gotoDefinition(view); });
+    connect(menu, &QMenu::aboutToShow, def, [this, def, doc] { def->setEnabled(m_lsp->hasServer(doc)); });
     menu->addSeparator();
     for (const char *name : std::initializer_list<const char *>{"edit_undo", "edit_redo", nullptr, "edit_cut", "edit_copy", "edit_paste", nullptr, "edit_select_all"}) {
         if (!name) menu->addSeparator();

@@ -22,6 +22,7 @@ namespace {
 struct Language {
     QString id;
     QList<QStringList> candidates; // argv lists, first found on the host wins
+    QString hint;                  // how to install a server
 };
 
 // Language servers by file extension.
@@ -29,26 +30,34 @@ const Language *languageFor(const QString &path)
 {
     static const QHash<QString, Language> byExt = [] {
         QHash<QString, Language> m;
-        const Language rust{QStringLiteral("rust"), {{QStringLiteral("rust-analyzer")}}};
+        const Language rust{QStringLiteral("rust"), {{QStringLiteral("rust-analyzer")}}, QStringLiteral("rustup component add rust-analyzer")};
         const QList<QStringList> clangd{{QStringLiteral("clangd")}};
+        const QString clangdHint = QStringLiteral("install clangd (part of LLVM/clang)");
         const QList<QStringList> python{{QStringLiteral("pyright-langserver"), QStringLiteral("--stdio")},
                                         {QStringLiteral("basedpyright-langserver"), QStringLiteral("--stdio")},
                                         {QStringLiteral("pylsp")}};
+        const QString pythonHint = QStringLiteral("npm install -g pyright, or pip install python-lsp-server");
         const QList<QStringList> ts{{QStringLiteral("typescript-language-server"), QStringLiteral("--stdio")}};
+        const QString tsHint = QStringLiteral("npm install -g typescript typescript-language-server");
         m.insert(QStringLiteral("rs"), rust);
-        for (const char *e : {"c", "h"}) m.insert(QLatin1String(e), {QStringLiteral("c"), clangd});
-        for (const char *e : {"cpp", "cc", "cxx", "hpp", "hh", "hxx"}) m.insert(QLatin1String(e), {QStringLiteral("cpp"), clangd});
-        m.insert(QStringLiteral("py"), {QStringLiteral("python"), python});
-        m.insert(QStringLiteral("ts"), {QStringLiteral("typescript"), ts});
-        m.insert(QStringLiteral("tsx"), {QStringLiteral("typescriptreact"), ts});
-        for (const char *e : {"js", "mjs", "cjs"}) m.insert(QLatin1String(e), {QStringLiteral("javascript"), ts});
-        m.insert(QStringLiteral("jsx"), {QStringLiteral("javascriptreact"), ts});
-        m.insert(QStringLiteral("go"), {QStringLiteral("go"), {{QStringLiteral("gopls")}}});
-        m.insert(QStringLiteral("kt"), {QStringLiteral("kotlin"), {{QStringLiteral("kotlin-language-server")}}});
-        m.insert(QStringLiteral("lua"), {QStringLiteral("lua"), {{QStringLiteral("lua-language-server")}}});
-        m.insert(QStringLiteral("zig"), {QStringLiteral("zig"), {{QStringLiteral("zls")}}});
+        for (const char *e : {"c", "h"}) m.insert(QLatin1String(e), {QStringLiteral("c"), clangd, clangdHint});
+        for (const char *e : {"cpp", "cc", "cxx", "hpp", "hh", "hxx"}) m.insert(QLatin1String(e), {QStringLiteral("cpp"), clangd, clangdHint});
+        m.insert(QStringLiteral("py"), {QStringLiteral("python"), python, pythonHint});
+        m.insert(QStringLiteral("ts"), {QStringLiteral("typescript"), ts, tsHint});
+        m.insert(QStringLiteral("tsx"), {QStringLiteral("typescriptreact"), ts, tsHint});
+        for (const char *e : {"js", "mjs", "cjs"}) m.insert(QLatin1String(e), {QStringLiteral("javascript"), ts, tsHint});
+        m.insert(QStringLiteral("jsx"), {QStringLiteral("javascriptreact"), ts, tsHint});
+        m.insert(QStringLiteral("dart"), {QStringLiteral("dart"),
+                                          {{QStringLiteral("dart"), QStringLiteral("language-server"), QStringLiteral("--protocol=lsp"),
+                                            QStringLiteral("--client-id=codeview")}},
+                                          QStringLiteral("install the Dart or Flutter SDK so `dart` is on the PATH of a login shell")});
+        m.insert(QStringLiteral("go"), {QStringLiteral("go"), {{QStringLiteral("gopls")}}, QStringLiteral("go install golang.org/x/tools/gopls@latest")});
+        m.insert(QStringLiteral("kt"), {QStringLiteral("kotlin"), {{QStringLiteral("kotlin-language-server")}}, QStringLiteral("install kotlin-language-server")});
+        m.insert(QStringLiteral("lua"), {QStringLiteral("lua"), {{QStringLiteral("lua-language-server")}}, QStringLiteral("install lua-language-server")});
+        m.insert(QStringLiteral("zig"), {QStringLiteral("zig"), {{QStringLiteral("zls")}}, QStringLiteral("install zls")});
         for (const char *e : {"sh", "bash"})
-            m.insert(QLatin1String(e), {QStringLiteral("shellscript"), {{QStringLiteral("bash-language-server"), QStringLiteral("start")}}});
+            m.insert(QLatin1String(e), {QStringLiteral("shellscript"), {{QStringLiteral("bash-language-server"), QStringLiteral("start")}},
+                                        QStringLiteral("npm install -g bash-language-server")});
         return m;
     }();
     const auto it = byExt.find(QFileInfo(path).suffix().toLower());
@@ -157,6 +166,8 @@ void LspServer::initialize()
     m_pending[id] = [this](const QJsonValue &, const QJsonObject &error) {
         if (!error.isEmpty()) {
             m_manager->status(QStringLiteral("%1 failed to start: %2").arg(m_name, error[QStringLiteral("message")].toString()));
+            m_failed = true;
+            m_manager->stateChanged();
             return;
         }
         send({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")}, {QStringLiteral("method"), QStringLiteral("initialized")},
@@ -165,6 +176,7 @@ void LspServer::initialize()
         for (const QJsonObject &m : std::as_const(m_queued)) send(m);
         m_queued.clear();
         m_manager->status(QStringLiteral("%1 ready").arg(m_name));
+        m_manager->stateChanged();
     };
     send({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")}, {QStringLiteral("id"), id}, {QStringLiteral("method"), QStringLiteral("initialize")},
           {QStringLiteral("params"), params}});
@@ -244,6 +256,34 @@ void LspManager::status(const QString &message)
     if (onStatus) onStatus(message);
 }
 
+void LspManager::stateChanged()
+{
+    if (onStateChanged) onStateChanged();
+}
+
+bool LspManager::hasServer(KTextEditor::Document *doc)
+{
+    Doc *d = docFor(doc);
+    return d && d->server && d->server->ready();
+}
+
+QString LspManager::describe(KTextEditor::Document *doc)
+{
+    if (Doc *d = docFor(doc)) {
+        if (d->server) {
+            if (d->server->failed()) return QStringLiteral("%1 failed to start").arg(d->server->name());
+            return d->server->ready() ? QStringLiteral("Code intelligence: %1").arg(d->server->name())
+                                      : QStringLiteral("Starting %1…").arg(d->server->name());
+        }
+        if (!d->problem.isEmpty()) return d->problem;
+        return QStringLiteral("Starting code intelligence…");
+    }
+    const QString suffix = QFileInfo(doc->url().toLocalFile()).suffix();
+    if (doc->url().isEmpty()) return {}; // diffs and other generated text
+    return suffix.isEmpty() ? QStringLiteral("No code intelligence for this file")
+                            : QStringLiteral("No code intelligence for .%1 files").arg(suffix);
+}
+
 LspManager::Doc *LspManager::docFor(KTextEditor::Document *doc) { return m_docs.value(doc); }
 
 void LspManager::attachDocument(KTextEditor::Document *doc, Connection *conn, const QString &path)
@@ -298,6 +338,8 @@ void LspManager::start(Doc *d)
                       Doc *d = guard ? docFor(guard) : nullptr;
                       if (!d) return;
                       if (!ok) {
+                          d->problem = QStringLiteral("No %1 language server on this host — %2").arg(lang->id, lang->hint);
+                          stateChanged();
                           // Say it once per host and language, not for every file.
                           if (const QString key = connId + QLatin1Char('/') + lang->id; !m_reported.contains(key)) {
                               m_reported.insert(key);
@@ -318,7 +360,9 @@ void LspManager::start(Doc *d)
                           server->initialize();
                       }
                       d->server = server;
+                      d->problem.clear();
                       opened(d);
+                      stateChanged();
                   });
 }
 
@@ -368,8 +412,10 @@ void LspManager::handleExit(Connection *conn, quint64 server, const QString &err
     for (Doc *d : std::as_const(m_docs))
         if (d->server == s) {
             d->server = nullptr;
+            d->problem = error.isEmpty() ? QStringLiteral("%1 stopped").arg(s->name()) : QStringLiteral("%1 stopped: %2").arg(s->name(), error);
             clearDiagnostics(d);
         }
+    stateChanged();
     status(error.isEmpty() ? QStringLiteral("%1 stopped").arg(s->name()) : QStringLiteral("%1 stopped: %2").arg(s->name(), error));
     delete s;
 }
@@ -396,6 +442,7 @@ void LspManager::connectionLost(Connection *conn)
             ++it;
         }
     }
+    stateChanged();
 }
 
 // ---- diagnostics ----
@@ -533,7 +580,7 @@ void LspManager::gotoDefinition(KTextEditor::View *view)
 {
     Doc *d = docFor(view->document());
     if (!d || !d->server) {
-        status(QStringLiteral("No code intelligence for this file"));
+        status(describe(view->document()));
         return;
     }
     const QString connId = d->connId;

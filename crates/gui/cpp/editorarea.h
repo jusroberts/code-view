@@ -44,6 +44,9 @@ public:
     bool queryCloseAll();
 
     std::function<void()> onSaved; // any document was saved
+    // The current file's code intelligence state (see codeIntelStatus) may have changed.
+    std::function<void()> onCodeIntelChanged;
+    QString codeIntelStatus() const;
 
 private:
     KTextEditor::View *viewAt(int index) const;
@@ -60,8 +63,10 @@ private:
     void focusAt(int index, int line, int column);
     void upload(KTextEditor::Document *doc);
     void updateTitle(KTextEditor::View *view);
+    void updateCodeIntel();
 
     LspManager *m_lsp;
+    QAction *m_gotoDef;
     QString m_session;
     QHash<QString, QPointer<QWidget>> m_lastCurrent; // session -> its last current tab
 };

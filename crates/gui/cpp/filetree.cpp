@@ -47,6 +47,7 @@ FileTree::FileTree(bool dirsOnly, QWidget *parent)
     m_tree = new QTreeWidget;
     m_tree->setHeaderHidden(true);
     m_tree->setUniformRowHeights(true);
+    m_tree->setExpandsOnDoubleClick(false); // itemActivated toggles folders (also on Enter)
     connect(m_tree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *item) {
         if (!item->data(0, LoadedRole).toBool()) load(item, item->data(0, PathRole).toString());
     });
@@ -54,7 +55,10 @@ FileTree::FileTree(bool dirsOnly, QWidget *parent)
         if (item && onSelect) onSelect(item->data(0, PathRole).toString());
     });
     connect(m_tree, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem *item) {
-        if (item->data(0, IsDirRole).toBool()) item->setExpanded(!item->isExpanded());
+        if (item->data(0, IsDirRole).toBool()) {
+            if (onActivateDir) onActivateDir(item->data(0, PathRole).toString());
+            else item->setExpanded(!item->isExpanded());
+        }
         else if (onOpenFile) onOpenFile(item->data(0, PathRole).toString());
     });
 
