@@ -39,7 +39,7 @@ struct FitHeight : QObject {
     {
         if (e->type() == QEvent::Resize) {
             auto *l = static_cast<QLabel *>(o);
-            l->setMinimumHeight(l->heightForWidth(l->width()));
+            l->setMinimumHeight(qMax(0, l->heightForWidth(l->width())));
         }
         return false;
     }
@@ -482,7 +482,7 @@ void ChatView::updatePermissionBar()
         text = QStringLiteral("Allow <b>Bash</b>?<pre style='white-space: pre-wrap'>%1</pre>").arg(esc(firstLines(p.input.value(QStringLiteral("command")).toString(), 12, 1500)));
     if (m_pending.size() > 1) text += QStringLiteral(" <i>(+%1 more)</i>").arg(m_pending.size() - 1);
     m_permLabel->setText(text);
-    m_permLabel->setMinimumHeight(m_permLabel->heightForWidth(m_permLabel->width()));
+    m_permLabel->setMinimumHeight(qMax(0, m_permLabel->heightForWidth(m_permLabel->width())));
     m_permBar->show();
 }
 
