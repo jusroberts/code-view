@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeyEvent>
+#include <QEvent>
 #include <QLabel>
 #include <QMimeData>
 #include <QPointer>
@@ -28,6 +29,19 @@
 namespace cv {
 
 namespace {
+// The chat splitter ignores a wrapped label's height-for-width, so the label
+// claims the height its text needs at its current width.
+struct FitHeight : QObject {
+    using QObject::QObject;
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() == QEvent::Resize) {
+            auto *l = static_cast<QLabel *>(o);
+            l->setMinimumHeight(l->heightForWidth(l->width()));
+        }
+        return false;
+    }
+};
 
 constexpr int kMaxImageSide = 2000;           // larger images are scaled down
 constexpr qsizetype kMaxImageBytes = 3500000; // stay well under the API's 5 MB limit
@@ -112,6 +126,7 @@ ChatView::ChatView(Connection *conn, const QJsonObject &info, QWidget *parent)
     m_permLabel->setWordWrap(true);
     m_permLabel->setTextFormat(Qt::RichText);
     m_permLabel->setForegroundRole(QPalette::ToolTipText);
+    m_permLabel->installEventFilter(new FitHeight(m_permLabel));
     auto *allow = new QPushButton(QIcon::fromTheme(QStringLiteral("dialog-ok")), QStringLiteral("&Allow"));
     auto *deny = new QPushButton(QIcon::fromTheme(QStringLiteral("dialog-cancel")), QStringLiteral("&Deny"));
     connect(allow, &QPushButton::clicked, this, [this] { answer(true); });
@@ -421,9 +436,10 @@ void ChatView::updatePermissionBar()
     const Pending &p = m_pending.first();
     QString text = QStringLiteral("Allow <b>%1</b>? %2").arg(esc(p.tool), toolSummary(p.tool, p.input));
     if (p.tool == QLatin1String("Bash") && !p.input.value(QStringLiteral("command")).toString().isEmpty())
-        text = QStringLiteral("Allow <b>Bash</b>?<pre>%1</pre>").arg(esc(firstLines(p.input.value(QStringLiteral("command")).toString(), 12, 1500)));
+        text = QStringLiteral("Allow <b>Bash</b>?<pre style='white-space: pre-wrap'>%1</pre>").arg(esc(firstLines(p.input.value(QStringLiteral("command")).toString(), 12, 1500)));
     if (m_pending.size() > 1) text += QStringLiteral(" <i>(+%1 more)</i>").arg(m_pending.size() - 1);
     m_permLabel->setText(text);
+    m_permLabel->setMinimumHeight(m_permLabel->heightForWidth(m_permLabel->width()));
     m_permBar->show();
 }
 
