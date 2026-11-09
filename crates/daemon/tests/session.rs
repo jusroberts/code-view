@@ -150,6 +150,9 @@ fn chat_permission_and_resume() {
         c.call(json!({"op": "write_file", "path": project.join("b.txt"), "content": "new"})).unwrap();
         assert_eq!(c.call(json!({"op": "read_file", "path": project.join("b.txt")})).unwrap()["content"], "new");
         assert!(c.call(json!({"op": "read_file", "path": project.join("missing")})).is_err());
+        c.call(json!({"op": "make_dir", "path": project.join("new-folder")})).unwrap();
+        assert!(project.join("new-folder").is_dir());
+        assert!(c.call(json!({"op": "make_dir", "path": project.join("new-folder")})).is_err()); // already exists
     }
 
     // After a daemon restart the session is still there and Claude is resumed.

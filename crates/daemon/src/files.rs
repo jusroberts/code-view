@@ -47,3 +47,8 @@ pub fn write_file(path: &str, content: &str) -> Result<()> {
     let p = expand(path);
     std::fs::write(&p, content).with_context(|| format!("writing {}", p.display()))
 }
+
+pub fn make_dir(path: &str) -> Result<()> {
+    let p = expand(path);
+    std::fs::create_dir(&p).with_context(|| format!("creating {}", p.display()))
+}

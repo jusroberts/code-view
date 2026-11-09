@@ -55,6 +55,8 @@ pub enum Request {
     /// Returns `{content}`.
     ReadFile { path: String },
     WriteFile { path: String, content: String },
+    /// Creates the folder `path` (its parent must exist).
+    MakeDir { path: String },
     /// Returns the JSON from `claude auth status --json`.
     AuthStatus,
     /// Starts `claude auth login` in a pseudo-terminal; output arrives as `Event::LoginOutput`.

@@ -99,6 +99,32 @@ QString pickFolder(QWidget *parent, Connection *conn, const QString &start)
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    // New Folder… creates a folder inside the chosen one, then selects it.
+    QPushButton *newFolder = buttons->addButton(QStringLiteral("New Folder…"), QDialogButtonBox::ActionRole);
+    newFolder->setIcon(QIcon::fromTheme(QStringLiteral("folder-new")));
+    QObject::connect(newFolder, &QPushButton::clicked, &dlg, [&dlg, conn, path, tree] {
+        const QString parentDir = path->text().trimmed().isEmpty() ? conn->home() : path->text().trimmed();
+        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New Folder"),
+                                                   QStringLiteral("Create a folder in %1:").arg(parentDir)).trimmed();
+        if (name.isEmpty()) return;
+        if (name.contains(QLatin1Char('/')) || name == QLatin1String(".") || name == QLatin1String("..")) {
+            QMessageBox::warning(&dlg, QStringLiteral("New Folder"), QStringLiteral("Enter a single folder name, without “/”."));
+            return;
+        }
+        const QString created = QDir::cleanPath(parentDir + QLatin1Char('/') + name);
+        QPointer<QDialog> guard(&dlg);
+        conn->request(QStringLiteral("make_dir"), QJsonObject{{QStringLiteral("path"), created}},
+                      [guard, path, tree, created](bool ok, const QJsonValue &, const QString &error) {
+                          if (!guard) return;
+                          if (!ok) {
+                              QMessageBox::warning(guard, QStringLiteral("New Folder"), error);
+                              return;
+                          }
+                          path->setText(created);
+                          tree->reveal(created);
+                          tree->refresh();
+                      });
+    });
     auto *layout = new QVBoxLayout(&dlg);
     layout->addWidget(tree, 1);
     layout->addWidget(path);

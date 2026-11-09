@@ -228,6 +228,10 @@ impl Daemon {
                 files::write_file(&path, &content)?;
                 Ok(Value::Null)
             }
+            Request::MakeDir { path } => {
+                files::make_dir(&path)?;
+                Ok(Value::Null)
+            }
             Request::AuthStatus => self.auth_status().await,
             Request::GitStatus { cwd } => Ok(json!(git::status(&cwd).await?)),
             Request::GitDiff { cwd, path, base } => Ok(json!({ "diff": git::diff(&cwd, &path, base.as_deref()).await? })),
