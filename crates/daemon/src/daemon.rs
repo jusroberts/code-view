@@ -97,9 +97,18 @@ impl Daemon {
                     pending: HashMap::new(),
                 };
                 if session.started {
-                    daemon.push(&mut session, SessionEvent::Info {
-                        message: "Session restored. Earlier messages aren't shown here, but Claude still has the conversation.".into(),
-                    });
+                    // Show the conversation so far from Claude's own transcript of it.
+                    match transcripts::transcript_path(&session.info.cwd, &session.claude_session_id) {
+                        Ok(path) => {
+                            for event in transcripts::history(&path).0 {
+                                daemon.push(&mut session, event);
+                            }
+                            daemon.push(&mut session, SessionEvent::Info { message: "Session restored.".into() });
+                        }
+                        Err(_) => daemon.push(&mut session, SessionEvent::Info {
+                            message: "Session restored. Earlier messages aren't shown here, but Claude still has the conversation.".into(),
+                        }),
+                    }
                 }
                 st.sessions.insert(session.info.id.clone(), session);
             }

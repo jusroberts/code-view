@@ -350,6 +350,16 @@ fn list_and_resume_saved_conversation() {
     c.call(json!({"op": "send_message", "session": sid, "text": "more"})).unwrap();
     assert_eq!(c.wait_event(|e| e["type"] == "info" && e["message"].as_str().unwrap().starts_with("Model"))["message"], "Model: fake-resumed");
     c.wait_event(|e| e["type"] == "turn_complete");
+
+    // After a daemon restart the chat is rebuilt from Claude's transcript.
+    drop(c);
+    drop(d);
+    let d = Daemon::start(&dir);
+    let mut c = Client::connect(&d);
+    let history = c.call(json!({"op": "get_history", "session": sid})).unwrap();
+    let kinds: Vec<&str> = history.as_array().unwrap().iter().map(|e| e["event"]["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["user", "text", "tool_use", "tool_result", "user", "info"]);
+    assert_eq!(history[5]["event"]["message"], "Session restored.");
 }
 
 #[test]

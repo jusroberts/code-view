@@ -29,7 +29,7 @@ The daemon keeps running after you close the GUI. After rebuilding, restart it w
 ## How it works
 
 - Each session runs `claude -p --input-format stream-json --output-format stream-json --permission-prompt-tool stdio` in the session's folder. Permission prompts appear in the GUI as Allow/Deny buttons. Images you paste or drop are sent to Claude inline.
-- Sessions are saved in `~/.local/state/codeview/sessions.json` and resumed with `claude --resume`. The daemon log is `~/.local/state/codeview/daemon.log`.
+- Sessions are saved in `~/.local/state/codeview/sessions.json` and resumed with `claude --resume`. When the daemon restarts, each chat is rebuilt from Claude's own transcript of the conversation. The daemon log is `~/.local/state/codeview/daemon.log`.
 - The daemon only listens on `$XDG_RUNTIME_DIR/codeview/daemon.sock`, which only your user can access. No network port is opened.
 - Git queries and language servers also run in the daemon, so the Changes panel and code intelligence work the same for remote sessions. Language servers stop when the GUI disconnects.
 - **Claude → Log In on Current Host…** runs `claude auth login` on that host and shows its output, so you can open the login link and paste the code back.
