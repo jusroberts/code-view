@@ -35,6 +35,8 @@ pub enum Request {
     /// Returns `[Conversation]`: Claude's saved conversations started in `cwd`, newest first.
     ListConversations { cwd: String },
     RenameSession { session: String, name: String },
+    /// Changes a session's permission mode (`claude --permission-mode` values), live if Claude is running.
+    SetPermissionMode { session: String, mode: String },
     CloseSession { session: String },
     /// Returns `[SeqEvent]`.
     GetHistory { session: String },

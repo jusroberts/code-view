@@ -9,6 +9,8 @@ if args[:2] == ["auth", "status"]:
 
 sid = args[args.index("--session-id") + 1] if "--session-id" in args else args[args.index("--resume") + 1]
 
+mode = args[args.index("--permission-mode") + 1] if "--permission-mode" in args else "none"
+
 def out(o):
     sys.stdout.write(json.dumps(o) + "\n")
     sys.stdout.flush()
@@ -22,6 +24,12 @@ while True:
     if msg is None:
         break
     if msg["type"] == "control_request":
+        req = msg["request"]
+        if req["subtype"] == "set_permission_mode":
+            if req["mode"] not in ("manual", "default", "acceptEdits", "auto", "plan"):  # like claude: bypass needs the launch flag
+                out({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": f"can't set {req['mode']}"}})
+                continue
+            mode = req["mode"]
         out({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": {}}})
         continue
     content = msg["message"]["content"]
@@ -30,6 +38,8 @@ while True:
     out({"type": "system", "subtype": "init", "session_id": sid, "model": "fake-resumed" if "--resume" in args else "fake-new"})
     out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hel"}}})
     out({"type": "assistant", "message": {"content": [{"type": "text", "text": f"echo:{text} images:{images}"}]}})
+    if text == "mode?":
+        out({"type": "assistant", "message": {"content": [{"type": "text", "text": f"mode:{mode}"}]}})
     if text == "run tool":
         out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}})
         out({"type": "control_request", "request_id": "perm1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "ls"}}})

@@ -762,11 +762,7 @@ void MainWindow::newSession(Connection *preferred)
     dirRow->addWidget(browse);
     auto *mode = new QComboBox;
     mode->addItem(QStringLiteral("Use my Claude settings"), QString());
-    mode->addItem(QStringLiteral("Ask before every change"), QStringLiteral("manual"));
-    mode->addItem(QStringLiteral("Accept file edits automatically"), QStringLiteral("acceptEdits"));
-    mode->addItem(QStringLiteral("Auto"), QStringLiteral("auto"));
-    mode->addItem(QStringLiteral("Plan only (no changes)"), QStringLiteral("plan"));
-    mode->addItem(QStringLiteral("Bypass all permission checks"), QStringLiteral("bypassPermissions"));
+    for (const auto &[label, value] : permissionModes()) mode->addItem(label, value);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);

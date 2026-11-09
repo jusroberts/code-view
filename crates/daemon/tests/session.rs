@@ -366,3 +366,31 @@ fn finds_programs_installed_after_start() {
     let started = c.call(json!({"op": "lsp_start", "file": dir.join("a.txt"), "candidates": [["late-ls"]]})).unwrap();
     assert_eq!(started["command"][0], dir.join("late/late-ls").to_string_lossy().as_ref());
 }
+
+#[test]
+fn change_permission_mode_while_running() {
+    let dir = tempdir("mode");
+    let d = Daemon::start(&dir);
+    let mut c = Client::connect(&d);
+    let sid = c.call(json!({"op": "create_session", "name": "", "cwd": dir})).unwrap()["id"].as_str().unwrap().to_string();
+    let mut ask = |c: &mut Client| {
+        c.call(json!({"op": "send_message", "session": sid, "text": "mode?"})).unwrap();
+        let text = c.wait_event(|e| e["type"] == "text" && e["text"].as_str().unwrap().starts_with("mode:"))["text"].clone();
+        c.wait_event(|e| e["type"] == "turn_complete");
+        text
+    };
+    assert_eq!(ask(&mut c), "mode:none");
+
+    // Changed live in the running Claude, and saved for the session.
+    c.call(json!({"op": "set_permission_mode", "session": sid, "mode": "auto"})).unwrap();
+    assert_eq!(c.call(json!({"op": "list_sessions"})).unwrap()[0]["permission_mode"], "auto");
+    assert_eq!(ask(&mut c), "mode:auto");
+
+    // Bypass needs Claude's launch flag, so Claude restarts with it.
+    c.call(json!({"op": "set_permission_mode", "session": sid, "mode": "bypassPermissions"})).unwrap();
+    assert_eq!(ask(&mut c), "mode:bypassPermissions");
+
+    // A mode Claude rejects shows up as an error.
+    c.call(json!({"op": "set_permission_mode", "session": sid, "mode": "dontAsk"})).unwrap();
+    assert!(c.wait_event(|e| e["type"] == "error")["message"].as_str().unwrap().starts_with("Claude: "));
+}

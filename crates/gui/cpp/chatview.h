@@ -10,6 +10,7 @@
 class QTextBrowser;
 class QLabel;
 class QPushButton;
+class QComboBox;
 class QFrame;
 class QHBoxLayout;
 class QMimeData;
@@ -17,6 +18,9 @@ class QMimeData;
 namespace cv {
 
 class Connection;
+
+// Claude permission modes: {label, `--permission-mode` value}.
+QList<QPair<QString, QString>> permissionModes();
 
 // Prompt box: Enter sends, Shift+Enter adds a newline, pasted/dropped images become attachments.
 class PromptEdit : public QPlainTextEdit
@@ -94,6 +98,7 @@ private:
     void answer(bool allow);
     void updatePermissionBar();
     void updateStatus();
+    void updateMode();
     QString toolSummary(const QString &name, const QJsonObject &input) const;
     QString displayPath(const QString &path) const;
 
@@ -108,6 +113,7 @@ private:
     QLabel *m_statusLabel;
     QPushButton *m_sendButton;
     QPushButton *m_stopButton;
+    QComboBox *m_modeBox;
 
     QList<Attachment> m_attachments;
     QList<Pending> m_pending;

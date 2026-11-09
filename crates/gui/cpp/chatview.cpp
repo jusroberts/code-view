@@ -14,8 +14,10 @@
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QEvent>
+#include <QComboBox>
 #include <QLabel>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -98,6 +100,17 @@ void PromptEdit::insertFromMimeData(const QMimeData *source)
 
 // ---- ChatView ----
 
+QList<QPair<QString, QString>> permissionModes()
+{
+    return {
+        {QStringLiteral("Ask before every change"), QStringLiteral("manual")},
+        {QStringLiteral("Accept file edits automatically"), QStringLiteral("acceptEdits")},
+        {QStringLiteral("Auto"), QStringLiteral("auto")},
+        {QStringLiteral("Plan only (no changes)"), QStringLiteral("plan")},
+        {QStringLiteral("Bypass all permission checks"), QStringLiteral("bypassPermissions")},
+    };
+}
+
 ChatView::ChatView(Connection *conn, const QJsonObject &info, QWidget *parent)
     : QWidget(parent)
     , m_conn(conn)
@@ -158,8 +171,25 @@ ChatView::ChatView(Connection *conn, const QJsonObject &info, QWidget *parent)
     connect(m_stopButton, &QPushButton::clicked, this, [this] {
         m_conn->request(QStringLiteral("interrupt"), {{QStringLiteral("session"), id()}});
     });
+    // Permission mode, changeable while the session runs.
+    m_modeBox = new QComboBox;
+    m_modeBox->setToolTip(QStringLiteral("Permission mode: what Claude may do without asking"));
+    m_modeBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    for (const auto &[label, mode] : permissionModes()) m_modeBox->addItem(label, mode);
+    connect(m_modeBox, &QComboBox::activated, this, [this] {
+        const QString mode = m_modeBox->currentData().toString();
+        if (mode.isEmpty() || mode == m_info.value(QStringLiteral("permission_mode")).toString()) return;
+        QPointer<ChatView> self(this);
+        m_conn->request(QStringLiteral("set_permission_mode"), {{QStringLiteral("session"), id()}, {QStringLiteral("mode"), mode}},
+                        [self](bool ok, const QJsonValue &, const QString &error) {
+                            if (!self || ok) return; // the session list update shows the new mode
+                            QMessageBox::warning(self, QStringLiteral("Permission Mode"), error);
+                            self->updateMode();
+                        });
+    });
     auto *buttons = new QHBoxLayout;
     buttons->addWidget(m_statusLabel, 1);
+    buttons->addWidget(m_modeBox);
     buttons->addWidget(m_stopButton);
     buttons->addWidget(m_sendButton);
 
@@ -183,12 +213,25 @@ ChatView::ChatView(Connection *conn, const QJsonObject &info, QWidget *parent)
     layout->addWidget(split);
 
     updateStatus();
+    updateMode();
 }
 
 void ChatView::setInfo(const QJsonObject &info)
 {
     m_info = info;
     updateStatus();
+    updateMode();
+}
+
+void ChatView::updateMode()
+{
+    const QString mode = m_info.value(QStringLiteral("permission_mode")).toString();
+    // "My Claude settings" is only listed while it's in effect: a running session can't go back to it.
+    const bool hasSettingsItem = m_modeBox->itemData(0).toString().isEmpty();
+    if (mode.isEmpty() && !hasSettingsItem) m_modeBox->insertItem(0, QStringLiteral("My Claude settings"), QString());
+    if (!mode.isEmpty() && hasSettingsItem) m_modeBox->removeItem(0);
+    const int i = m_modeBox->findData(mode);
+    if (i >= 0) m_modeBox->setCurrentIndex(i);
 }
 
 void ChatView::focusPrompt() { m_input->setFocus(); }

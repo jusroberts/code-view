@@ -193,6 +193,29 @@ impl Daemon {
                 self.sessions_changed(&st);
                 Ok(Value::Null)
             }
+            Request::SetPermissionMode { session, mode } => {
+                if mode.is_empty() {
+                    bail!("no permission mode given");
+                }
+                let mut st = self.state.lock().unwrap();
+                let s = st.sessions.get_mut(&session).context("no such session")?;
+                if let Some(p) = &s.proc {
+                    if mode == "bypassPermissions" {
+                        // Claude only allows this if it was launched with it, so restart it.
+                        if s.busy {
+                            bail!("Claude can only switch to bypass mode between turns. Try again when it has finished.");
+                        }
+                        s.proc = None;
+                    } else {
+                        p.send(claude::set_permission_mode_request(&mode));
+                    }
+                }
+                self.push(s, SessionEvent::Info { message: format!("Permission mode: {mode}") });
+                s.info.permission_mode = Some(mode);
+                self.persist(&st);
+                self.sessions_changed(&st);
+                Ok(Value::Null)
+            }
             Request::GetHistory { session } => {
                 let st = self.state.lock().unwrap();
                 Ok(json!(st.sessions.get(&session).context("no such session")?.history))

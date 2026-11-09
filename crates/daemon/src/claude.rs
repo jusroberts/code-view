@@ -162,6 +162,15 @@ pub fn interrupt_request() -> String {
     .to_string()
 }
 
+pub fn set_permission_mode_request(mode: &str) -> String {
+    json!({
+        "type": "control_request",
+        "request_id": uuid::Uuid::new_v4().to_string(),
+        "request": {"subtype": "set_permission_mode", "mode": mode},
+    })
+    .to_string()
+}
+
 pub fn permission_response(request_id: &str, allow: bool, input: Value) -> String {
     let response = if allow {
         json!({"behavior": "allow", "updatedInput": input})
@@ -237,6 +246,11 @@ pub fn translate(v: &Value) -> Vec<Action> {
                     None
                 },
             }));
+        }
+        // Answers to our control requests; only failures (e.g. a rejected mode change) matter.
+        "control_response" if v["response"]["subtype"] == "error" => {
+            let error = v["response"]["error"].as_str().unwrap_or("unknown error");
+            out.push(Action::Event(SessionEvent::Error { message: format!("Claude: {error}") }));
         }
         "control_request" => {
             let request_id = v["request_id"].as_str().unwrap_or_default().to_string();
